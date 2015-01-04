@@ -1,6 +1,6 @@
 /*
  * Copyright 2010-2011 INRIA Saclay
- * Copyright 2014      INRIA Rocquencourt
+ * Copyright 2014-2015 INRIA Rocquencourt
  *
  * Use of this software is governed by the MIT license
  *
@@ -27,6 +27,7 @@
 
 #include "grouping.h"
 #include "schedule.h"
+#include "util.h"
 
 /* Add parameters with identifiers "ids" to "set".
  */
@@ -212,6 +213,39 @@ static __isl_give isl_multi_union_pw_aff *expand_partial(
 	return isl_multi_union_pw_aff_pullback_union_pw_multi_aff(partial, con);
 }
 
+/* Given a partial schedule in terms of untagged statement instances,
+ * adjust it to apply to all tagged instances in domain and range of "tagged".
+ */
+static __isl_give isl_multi_union_pw_aff *tag_partial(
+	__isl_keep isl_union_map *tagged,
+	__isl_take isl_multi_union_pw_aff *partial)
+{
+	isl_union_pw_multi_aff *untag;
+
+	untag = ppcg_extract_untag_from_tagged_relation(tagged);
+	return isl_multi_union_pw_aff_pullback_union_pw_multi_aff(partial,
+								untag);
+}
+
+/* Given a relation "umap" between pairs of domain instances
+ * at the leaves of the schedule tree, select those
+ * that are scheduled together by the ancestors of "node".
+ * That is, select those that have the same value for the prefix schedule.
+ * If "tagged" is set, then domain and range of "umap" refer
+ * to tagged domain instances.
+ */
+static __isl_give isl_union_map *localize(__isl_keep isl_schedule_node *node,
+	__isl_take isl_union_map *umap, int tagged)
+{
+	isl_multi_union_pw_aff *prefix;
+
+	prefix = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(node);
+	if (tagged)
+		prefix = tag_partial(umap, prefix);
+	prefix = expand_partial(node, prefix);
+	return isl_union_map_eq_at_multi_union_pw_aff(umap, prefix);
+}
+
 /* Given a relation "untagged" between pairs of domain instances
  * at the leaves of the schedule tree, select those
  * that are scheduled together by the ancestors of "node".
@@ -220,21 +254,205 @@ static __isl_give isl_multi_union_pw_aff *expand_partial(
 static __isl_give isl_union_map *localize_untagged(
 	__isl_keep isl_schedule_node *node, __isl_take isl_union_map *untagged)
 {
-	isl_multi_union_pw_aff *prefix;
+	return localize(node, untagged, 0);
+}
 
-	prefix = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(node);
-	prefix = expand_partial(node, prefix);
-	return isl_union_map_eq_at_multi_union_pw_aff(untagged, prefix);
+/* Given a relation "tagged" between pairs of tagged domain instances
+ * at the leaves of the schedule tree, select those
+ * that are scheduled together by the ancestors of "node".
+ * That is, select those that have the same value for the prefix schedule.
+ */
+static __isl_give isl_union_map *localize_tagged(
+	__isl_keep isl_schedule_node *node, __isl_take isl_union_map *tagged)
+{
+	return localize(node, tagged, 1);
+}
+
+/* Return the validity constraints between pairs of instances
+ * that are scheduled together by the ancestors of "node".
+ * That is, select those validity constraints that relate
+ * pairs of instances that have the same value for the prefix schedule.
+ */
+static __isl_give isl_union_map *get_local_validity(
+	__isl_keep isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc)
+{
+	isl_union_map *validity;
+
+	validity = isl_schedule_constraints_get_validity(sc);
+	validity = localize_untagged(node, validity);
+
+	return validity;
+}
+
+/* Return the conditional validity constraints between pairs of tagged instances
+ * that are scheduled together by the ancestors of "node".
+ * That is, select those conditional validity constraints that relate
+ * pairs of tagged instances that have the same value for the prefix schedule.
+ */
+static __isl_give isl_union_map *get_local_conditional_validity(
+	__isl_keep isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc)
+{
+	isl_union_map *validity;
+
+	validity = isl_schedule_constraints_get_conditional_validity(sc);
+	validity = localize_tagged(node, validity);
+
+	return validity;
+}
+
+/* Return the conditional validity conditions between pairs of tagged instances
+ * that are scheduled together by the ancestors of "node".
+ * That is, select those conditional validity conditions that relate
+ * pairs of tagged instances that have the same value for the prefix schedule.
+ */
+static __isl_give isl_union_map *get_local_conditional_validity_condition(
+	__isl_keep isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc)
+{
+	isl_union_map *condition;
+
+	condition =
+	    isl_schedule_constraints_get_conditional_validity_condition(sc);
+	condition = localize_tagged(node, condition);
+
+	return condition;
+}
+
+/* Given conditional validity constraints specified by "condition" and
+ * "conditional", find those that need to be imposed because
+ * the corresponding condition is set with respect to "partial".
+ * The inputs are tagged relations.
+ * That is, find the conditions where source and target are
+ * not coscheduled by "partial" and return the adjacent
+ * conditional validity constraints, with the tags removed.
+ */
+static __isl_give isl_union_map *active_conditional(
+	__isl_keep isl_multi_union_pw_aff *partial,
+	__isl_keep isl_union_map *condition,
+	__isl_keep isl_union_map *conditional)
+{
+	isl_union_map *umap;
+	isl_union_map *local;
+	isl_multi_union_pw_aff *tagged;
+	isl_union_set *source, *sink;
+
+	condition = isl_union_map_copy(condition);
+	conditional = isl_union_map_copy(conditional);
+
+	tagged = tag_partial(condition, isl_multi_union_pw_aff_copy(partial));
+	local = isl_union_map_copy(condition);
+	local = isl_union_map_eq_at_multi_union_pw_aff(local, tagged);
+	condition = isl_union_map_subtract(condition, local);
+
+	source = isl_union_map_domain(isl_union_map_copy(condition));
+	sink = isl_union_map_range(condition);
+
+	umap = isl_union_map_copy(conditional);
+	umap = isl_union_map_intersect_range(umap, source);
+	conditional = isl_union_map_intersect_domain(conditional, sink);
+	conditional = isl_union_map_union(conditional, umap);
+	conditional = isl_union_map_factor_domain(conditional);
+
+	return conditional;
+}
+
+/* Are all members of the partial schedule "partial" starting at "first"
+ * valid for the given validity and conditional validity constraints?
+ *
+ * A validity constraint is violated by a member if any source is
+ * scheduled after a corresponding target.
+ * A conditional validity constraint is violated by a member if any source is
+ * scheduled after a corresponding target and there is at least one
+ * adjacent condition that is not coscheduled by the entire "partial".
+ */
+static isl_bool valid_members(__isl_keep isl_multi_union_pw_aff *partial,
+	int first, __isl_keep isl_union_map *validity,
+	__isl_keep isl_union_map *condition,
+	__isl_keep isl_union_map *conditional)
+{
+	int i, n;
+	isl_bool valid = isl_bool_true;
+
+	if (!partial)
+		return isl_bool_error;
+	n = isl_multi_union_pw_aff_dim(partial, isl_dim_set);
+	if (first >= n)
+		return isl_bool_true;
+
+	validity = isl_union_map_copy(validity);
+	conditional = active_conditional(partial, condition, conditional);
+	validity = isl_union_map_union(validity, conditional);
+
+	for (i = first; i < n; ++i) {
+		isl_union_map *validity_i;
+		isl_union_pw_aff *upa;
+		isl_multi_union_pw_aff *partial_i;
+
+		upa = isl_multi_union_pw_aff_get_union_pw_aff(partial, i);
+		partial_i = isl_multi_union_pw_aff_from_union_pw_aff(upa);
+		validity_i = isl_union_map_copy(validity);
+		validity_i = isl_union_map_lex_gt_at_multi_union_pw_aff(
+						    validity_i, partial_i);
+		valid = isl_union_map_is_empty(validity_i);
+		isl_union_map_free(validity_i);
+
+		if (valid < 0 || !valid)
+			break;
+	}
+
+	isl_union_map_free(validity);
+
+	return valid;
 }
 
 /* If the band node "node" has exactly one member then mark it permutable.
+ * Otherwise, check whether all members (except the first) are valid
+ * with respect to the (conditional) validity constraints in "sc"
+ * that are active at the top of the node.
+ * The first member is not checked because the schedule tree
+ * is assumed to be valid (aside from the initial band properties).
+ * The schedule constraints in "sc" are specified in terms
+ * of the domain elements at the leaves of the schedule tree.
+ *
+ * Only the (conditional) validity constraints that are active
+ * at "node" need to be checked.  The partial schedule of the band node
+ * is reformulated in terms of the domain elements at the leaves
+ * before checking the validity of the members.
  */
 static __isl_give isl_schedule_node *band_set_permutable(
 	__isl_take isl_schedule_node *node,
 	__isl_keep isl_schedule_constraints *sc)
 {
+	isl_union_map *condition, *validity, *conditional;
+	isl_multi_union_pw_aff *partial;
+	isl_union_pw_multi_aff *contraction;
+	isl_bool valid;
+
 	if (isl_schedule_node_band_n_member(node) == 1)
-		node = isl_schedule_node_band_set_permutable(node, 1);
+		return isl_schedule_node_band_set_permutable(node, 1);
+
+	validity = get_local_validity(node, sc);
+	condition = get_local_conditional_validity_condition(node, sc);
+	conditional = get_local_conditional_validity(node, sc);
+
+	contraction = isl_schedule_node_get_subtree_contraction(node);
+	partial = isl_schedule_node_band_get_partial_schedule(node);
+	partial = isl_multi_union_pw_aff_pullback_union_pw_multi_aff(partial,
+								contraction);
+
+	valid = valid_members(partial, 1, validity, condition, conditional);
+
+	isl_multi_union_pw_aff_free(partial);
+	isl_union_map_free(validity);
+	isl_union_map_free(condition);
+	isl_union_map_free(conditional);
+
+	if (valid < 0)
+		return isl_schedule_node_free(node);
+
+	node = isl_schedule_node_band_set_permutable(node, valid);
 
 	return node;
 }
