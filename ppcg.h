@@ -121,4 +121,6 @@ __isl_give isl_schedule *ppcg_compute_schedule(
 	__isl_take isl_schedule_constraints *sc,
 	__isl_keep isl_schedule *schedule, struct ppcg_options *options);
 
+__isl_give isl_schedule *compute_cpu_schedule(struct ppcg_scop *ps);
+
 #endif

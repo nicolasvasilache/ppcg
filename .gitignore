@@ -24,5 +24,7 @@ missing
 ppcg
 test-driver
 
+*.lo
+*.o
 opencl_test.sh
 polybench_test.sh
