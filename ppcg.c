@@ -865,7 +865,7 @@ static void *ppcg_scop_free(struct ppcg_scop *ps)
 }
 
 static struct ppcg_scop *ppcg_scop_from_torchterra(isl_ctx *ctx, isl_union_set *domain,
-   isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule)
+   isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule, isl_set *context)
 {
    struct ppcg_scop *ps;
    isl_space *space;
@@ -874,7 +874,10 @@ static struct ppcg_scop *ppcg_scop_from_torchterra(isl_ctx *ctx, isl_union_set *
 	options = options_new_with_defaults();
 	assert(options);
 
-	ctx = isl_ctx_alloc_with_options(&options_args, options);
+	isl_options_set_ast_build_detect_min_max(ctx, 1);
+	isl_options_set_schedule_whole_component(ctx, 1);
+	isl_options_set_schedule_maximize_band_depth(ctx, 1);
+	isl_options_set_schedule_maximize_coincidence(ctx, 1);
    options->ppcg->target = PPCG_TARGET_C;
    options->ppcg->live_range_reordering =  0;
 	ppcg_options_set_target_defaults(options->ppcg);
@@ -883,6 +886,7 @@ static struct ppcg_scop *ppcg_scop_from_torchterra(isl_ctx *ctx, isl_union_set *
       return NULL;
 
    ps->options = options->ppcg;
+   ps->context = isl_set_copy(context);
    ps->domain = isl_union_set_copy(domain);
    ps->reads = isl_union_map_copy(reads);
    space = isl_union_map_get_space(reads);
@@ -897,12 +901,12 @@ static struct ppcg_scop *ppcg_scop_from_torchterra(isl_ctx *ctx, isl_union_set *
 }
 
 isl_schedule *torchterra_transform(isl_ctx *ctx, isl_union_set *domain, 
-isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule)
+isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule, isl_set *context)
 {
    struct ppcg_scop *ps;
    isl_schedule *newSchedule;
 
-   ps = ppcg_scop_from_torchterra(ctx, domain, reads, writes, schedule);
+   ps = ppcg_scop_from_torchterra(ctx, domain, reads, writes, schedule, context);
 
 	compute_dependences(ps);
 
