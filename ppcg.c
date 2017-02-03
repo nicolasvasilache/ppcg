@@ -877,9 +877,15 @@ static struct ppcg_scop *ppcg_scop_from_torchterra(isl_ctx *ctx, isl_union_set *
 	isl_options_set_ast_build_detect_min_max(ctx, 1);
 	isl_options_set_schedule_whole_component(ctx, 1);
 	isl_options_set_schedule_maximize_band_depth(ctx, 1);
-	isl_options_set_schedule_maximize_coincidence(ctx, 1);
+	isl_options_set_schedule_maximize_coincidence(ctx, 0);
+   isl_options_set_schedule_maximize_band_depth(ctx, 1);
+   isl_options_set_schedule_separate_components(ctx, 0);
+   isl_options_set_schedule_parametric(ctx, 0);
+
    options->ppcg->target = PPCG_TARGET_C;
    options->ppcg->live_range_reordering =  0;
+   options->ppcg->group_chains = 1;
+   struct isl_options* isl_opt = options->ppcg->isl;
 	ppcg_options_set_target_defaults(options->ppcg);
    ps = isl_calloc_type(ctx, struct ppcg_scop);
    if(!ps)
