@@ -355,7 +355,7 @@ static void compute_tagger(struct ppcg_scop *ps)
 	tagged = isl_union_set_unwrap(isl_union_map_domain(tagged));
 
 	tagger = isl_union_map_domain_map_union_pw_multi_aff(tagged);
-   
+
 	ps->tagger = tagger;
 }
 
@@ -868,45 +868,50 @@ static struct ppcg_scop *ppcg_scop_from_torchterra(isl_ctx *ctx, isl_union_set *
    isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule, isl_set *context)
 {
    struct ppcg_scop *ps;
-   isl_space *space;
-	struct options *options;
 
-	options = options_new_with_defaults();
-	assert(options);
+   printf("Should not be here, EXIT");
+   exit(1);
 
-	isl_options_set_ast_build_detect_min_max(ctx, 1);
-	isl_options_set_schedule_whole_component(ctx, 1);
-	isl_options_set_schedule_maximize_band_depth(ctx, 1);
-	isl_options_set_schedule_maximize_coincidence(ctx, 0);
-   isl_options_set_schedule_maximize_band_depth(ctx, 1);
-   isl_options_set_schedule_separate_components(ctx, 0);
-   isl_options_set_schedule_parametric(ctx, 0);
 
-   options->ppcg->target = PPCG_TARGET_C;
-   options->ppcg->live_range_reordering =  0;
-   options->ppcg->group_chains = 1;
-   struct isl_options* isl_opt = options->ppcg->isl;
-	ppcg_options_set_target_defaults(options->ppcg);
-   ps = isl_calloc_type(ctx, struct ppcg_scop);
-   if(!ps)
-      return NULL;
+   // isl_space *space;
+   //      struct options *options;
 
-   ps->options = options->ppcg;
-   ps->context = isl_set_copy(context);
-   ps->domain = isl_union_set_copy(domain);
-   ps->reads = isl_union_map_copy(reads);
-   space = isl_union_map_get_space(reads);
-   ps->may_writes = isl_union_map_copy(writes);
-   ps->must_writes = isl_union_map_copy(writes);
-   ps->must_kills = isl_union_map_empty(space);
-   ps->independence = isl_union_map_empty(space);
-   ps->schedule = isl_schedule_copy(schedule);
-   ps->call = isl_union_set_empty(isl_union_set_get_space(domain));
+   //      options = options_new_with_defaults();
+   //      assert(options);
+
+   //      isl_options_set_ast_build_detect_min_max(ctx, 1);
+   //      isl_options_set_schedule_whole_component(ctx, 1);
+   //      isl_options_set_schedule_maximize_band_depth(ctx, 1);
+   //      isl_options_set_schedule_maximize_coincidence(ctx, 0);
+   // isl_options_set_schedule_maximize_band_depth(ctx, 1);
+   // isl_options_set_schedule_separate_components(ctx, 0);
+   // isl_options_set_schedule_parametric(ctx, 0);
+
+   // options->ppcg->target = PPCG_TARGET_C;
+   // options->ppcg->live_range_reordering =  0;
+   // options->ppcg->group_chains = 1;
+   // struct isl_options* isl_opt = options->ppcg->isl;
+   //      ppcg_options_set_target_defaults(options->ppcg);
+   // ps = isl_calloc_type(ctx, struct ppcg_scop);
+   // if(!ps)
+   //    return NULL;
+
+   // ps->options = options->ppcg;
+   // ps->context = isl_set_copy(context);
+   // ps->domain = isl_union_set_copy(domain);
+   // ps->reads = isl_union_map_copy(reads);
+   // space = isl_union_map_get_space(reads);
+   // ps->may_writes = isl_union_map_copy(writes);
+   // ps->must_writes = isl_union_map_copy(writes);
+   // ps->must_kills = isl_union_map_empty(space);
+   // ps->independence = isl_union_map_empty(space);
+   // ps->schedule = isl_schedule_copy(schedule);
+   // ps->call = isl_union_set_empty(isl_union_set_get_space(domain));
 
    return ps;
 }
 
-isl_schedule *torchterra_transform(isl_ctx *ctx, isl_union_set *domain, 
+isl_schedule *torchterra_transform(isl_ctx *ctx, isl_union_set *domain,
 isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule, isl_set *context)
 {
    struct ppcg_scop *ps;
