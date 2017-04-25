@@ -1,50 +1,4 @@
-Requirements:
-
-- automake, autoconf, libtool
-	(not needed when compiling a release)
-- pkg-config (http://www.freedesktop.org/wiki/Software/pkg-config)
-	(not needed when compiling a release using the included isl and pet)
-- gmp (http://gmplib.org/)
-- libyaml (http://pyyaml.org/wiki/LibYAML)
-	(only needed if you want to compile the pet executable)
-- LLVM/clang libraries, 2.9 or higher (http://clang.llvm.org/get_started.html)
-	Unless you have some other reasons for wanting to use the svn version,
-	it is best to install the latest release (3.8).
-	For more details, see pet/README.
-
-If you are installing on Ubuntu, then you can install the following packages:
-
-automake autoconf libtool pkg-config libgmp3-dev libyaml-dev libclang-dev llvm
-
-Note that you need at least version 3.2 of libclang-dev (ubuntu raring).
-Older versions of this package did not include the required libraries.
-If you are using an older version of ubuntu, then you need to compile and
-install LLVM/clang from source.
-
-
-Preparing:
-
-Grab the latest release and extract it or get the source from
-the git repository as follows.  This process requires autoconf,
-automake, libtool and pkg-config.
-
-	git clone git://repo.or.cz/ppcg.git
-	cd ppcg
-	./get_submodules.sh
-	./autogen.sh
-
-
-Compilation:
-
-	./configure
-	make
-	make check
-
-If you have installed any of the required libraries in a non-standard
-location, then you may need to use the --with-gmp-prefix,
---with-libyaml-prefix and/or --with-clang-prefix options
-when calling "./configure".
-
+This is a one-off fork, no install instructions
 
 Using PPCG to generate CUDA or OpenCL code
 
@@ -57,7 +11,7 @@ before the fragment and add a line containing
 	#pragma endscop
 
 after the fragment.  To generate CUDA code run
-	
+
 	ppcg --target=cuda file.c
 
 where file.c is the file containing the fragment.  The generated
