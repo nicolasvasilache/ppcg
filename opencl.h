@@ -5,7 +5,15 @@
 #include "ppcg_options.h"
 #include "ppcg.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 int generate_opencl(isl_ctx *ctx, struct ppcg_options *options,
 	const char *input, const char *output);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

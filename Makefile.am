@@ -101,9 +101,25 @@ libppcg_la_SOURCES = \
 	version.c
 
 pkginclude_HEADERS = \
+	cpu.h \
+	cuda_common.h \
+	cuda.h \
+	gpu_array_tile.h \
+	gpu_group.h \
+	gpu.h \
+	gpu_hybrid.h \
+	gpu_print.h \
+	gpu_tree.h \
+	hybrid.h \
+	ocl_utilities.h \
+	opencl.h \
 	ppcg.h \
+	ppcg_options.h \
+	print.h \
+	schedule.h \
 	terra_ppcg.h \
-	ppcg_options.h
+	util.h
+
 libppcg_la_LIADD = $(LIB_PET) $(LIB_ISL)
 
 TESTS = @extra_tests@

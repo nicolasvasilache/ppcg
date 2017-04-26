@@ -5,6 +5,10 @@
 
 #include "gpu.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 __isl_give isl_schedule_node *gpu_tree_insert_shared_before_thread(
 	__isl_take isl_schedule_node *node);
 int gpu_tree_node_is_kernel(__isl_keep isl_schedule_node *node);
@@ -29,5 +33,9 @@ __isl_give isl_schedule_node *gpu_tree_move_left_to_sync(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel);
 __isl_give isl_schedule_node *gpu_tree_move_right_to_sync(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

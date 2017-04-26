@@ -3,6 +3,10 @@
 
 #include "gpu.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 __isl_give isl_printer *gpu_print_local_declarations(__isl_take isl_printer *p,
 	struct gpu_prog *prog);
 
@@ -24,5 +28,9 @@ __isl_give isl_printer *ppcg_kernel_print_copy(__isl_take isl_printer *p,
 	struct ppcg_kernel_stmt *stmt);
 __isl_give isl_printer *ppcg_kernel_print_domain(__isl_take isl_printer *p,
 	struct ppcg_kernel_stmt *stmt);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

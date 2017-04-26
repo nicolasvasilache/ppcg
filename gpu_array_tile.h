@@ -51,9 +51,17 @@ struct gpu_array_tile {
 	isl_multi_aff *tiling;
 };
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 struct gpu_array_tile *gpu_array_tile_create(isl_ctx *ctx, int n_index);
 struct gpu_array_tile *gpu_array_tile_free(struct gpu_array_tile *tile);
 
 __isl_give isl_val *gpu_array_tile_size(struct gpu_array_tile *tile);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

@@ -4,7 +4,15 @@
 #include "ppcg_options.h"
 #include "ppcg.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 int generate_cuda(isl_ctx *ctx, struct ppcg_options *options,
 	const char *input);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

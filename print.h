@@ -9,6 +9,10 @@ extern const char *ppcg_min;
 extern const char *ppcg_max;
 extern const char *ppcg_fdiv_q;
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 __isl_give isl_printer *ppcg_start_block(__isl_take isl_printer *p);
 __isl_give isl_printer *ppcg_end_block(__isl_take isl_printer *p);
 
@@ -36,5 +40,9 @@ __isl_give isl_printer *ppcg_print_exposed_declarations(
 	__isl_take isl_printer *p, struct ppcg_scop *scop);
 __isl_give isl_printer *ppcg_print_hidden_declarations(
 	__isl_take isl_printer *p, struct ppcg_scop *scop);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

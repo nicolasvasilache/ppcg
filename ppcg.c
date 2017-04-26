@@ -1089,16 +1089,31 @@ static int check_options(isl_ctx *ctx)
 	return 0;
 }
 
-int main(int argc, char **argv)
-{
-	int r;
-	isl_ctx *ctx;
+isl_ctx* isl_ctx_alloc_with_pet_and_ppcg_options() {
 	struct options *options;
 
 	options = options_new_with_defaults();
 	assert(options);
 
-	ctx = isl_ctx_alloc_with_options(&options_args, options);
+	return isl_ctx_alloc_with_options(&options_args, options);
+}
+
+struct pet_options* isl_ctx_get_pet_options(isl_ctx* ctx) {
+  struct options *options = isl_ctx_peek_options(ctx, &options_args);
+  return options->pet;
+}
+
+struct ppcg_options* isl_ctx_get_ppcg_options(isl_ctx* ctx) {
+  struct options *options = isl_ctx_peek_options(ctx, &options_args);
+  return options->ppcg;
+}
+
+int main(int argc, char **argv)
+{
+	int r;
+	isl_ctx *ctx = isl_ctx_alloc_with_pet_and_ppcg_options();
+	struct options *options = isl_ctx_peek_options(ctx, &options_args);
+
 	ppcg_options_set_target_defaults(options->ppcg);
 	isl_options_set_ast_build_detect_min_max(ctx, 1);
 	isl_options_set_ast_print_macro_once(ctx, 1);

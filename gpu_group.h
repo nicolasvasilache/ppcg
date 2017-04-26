@@ -46,6 +46,10 @@ struct gpu_array_ref_group {
 	struct gpu_stmt_access **refs;
 };
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 int gpu_group_references(struct ppcg_kernel *kernel,
 	__isl_keep isl_schedule_node *node);
 
@@ -61,5 +65,9 @@ struct gpu_array_tile *gpu_array_ref_group_tile(
 	struct gpu_array_ref_group *group);
 struct gpu_array_ref_group *gpu_array_ref_group_free(
 	struct gpu_array_ref_group *group);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

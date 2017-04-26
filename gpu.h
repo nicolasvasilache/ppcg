@@ -411,6 +411,10 @@ struct ppcg_kernel {
 	isl_ast_node *tree;
 };
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 int gpu_array_is_scalar(struct gpu_array_info *array);
 int gpu_array_is_read_only_scalar(struct gpu_array_info *array);
 int gpu_array_requires_device_allocation(struct gpu_array_info *array);
@@ -431,5 +435,9 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	__isl_take isl_schedule_node *node, int scale,
 	__isl_keep isl_multi_val *sizes);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif
