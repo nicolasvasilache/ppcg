@@ -95,6 +95,14 @@ ISL_ARG_DECL(ppcg_options, struct ppcg_options, ppcg_options_args)
 #define		PPCG_TARGET_CUDA	1
 #define		PPCG_TARGET_OPENCL      2
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 void ppcg_options_set_target_defaults(struct ppcg_options *options);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif
