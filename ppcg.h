@@ -10,6 +10,10 @@
 
 #include "ppcg_options.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 const char *ppcg_base_name(const char *filename);
 int ppcg_extract_base_name(char *name, const char *input);
 
@@ -122,5 +126,9 @@ __isl_give isl_schedule *ppcg_compute_schedule(
 	__isl_keep isl_schedule *schedule, struct ppcg_options *options);
 
 __isl_give isl_schedule *compute_cpu_schedule(struct ppcg_scop *ps);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif
