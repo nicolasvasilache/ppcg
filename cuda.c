@@ -683,7 +683,7 @@ static __isl_give isl_printer *print_host_code(__isl_take isl_printer *p,
  * "types" collects the types for which a definition has already
  * been printed.
  */
-static __isl_give isl_printer *print_cuda(__isl_take isl_printer *p,
+__isl_give isl_printer *print_cuda(__isl_take isl_printer *p,
 	struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
 	struct gpu_types *types, void *user)
 {
