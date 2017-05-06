@@ -1624,8 +1624,11 @@ static __isl_give isl_union_map *prefix_with_equalities(
  * a gpu_group_data structure and then consider each array
  * in turn.
  */
-int gpu_group_references(struct ppcg_kernel *kernel,
-	__isl_keep isl_schedule_node *node)
+int gpu_group_references_with_traversal(
+  struct ppcg_kernel *kernel,
+  __isl_keep isl_schedule_node *node,
+  isl_schedule_node* (*move_down_to_shared)(isl_schedule_node *, isl_union_set *),
+  isl_schedule_node* (*move_down_to_thread)(isl_schedule_node *, isl_union_set *))
 {
 	int i;
 	int r = 0;
@@ -1640,13 +1643,14 @@ int gpu_group_references(struct ppcg_kernel *kernel,
 	data.host_sched = isl_schedule_node_get_prefix_schedule_relation(node);
 
 	node = isl_schedule_node_copy(node);
-	node = gpu_tree_move_down_to_shared(node, kernel->core);
+	node = move_down_to_shared(node, kernel->core);
 	data.shared_depth = isl_schedule_node_get_schedule_depth(node);
 	data.shared_sched = prefix_with_equalities(node);
 
-	node = gpu_tree_move_down_to_thread(node, kernel->core);
+	node = move_down_to_thread(node, kernel->core);
 	node = isl_schedule_node_child(node, 0);
 	data.thread_depth = isl_schedule_node_get_schedule_depth(node);
+
 	data.n_thread = isl_schedule_node_band_n_member(node);
 	if (data.thread_depth == data.shared_depth)
 		data.copy_sched = isl_union_map_copy(data.shared_sched);
@@ -1691,6 +1695,16 @@ int gpu_group_references(struct ppcg_kernel *kernel,
 	isl_set_free(data.privatization);
 
 	return r;
+}
+
+int gpu_group_references(struct ppcg_kernel *kernel,
+	__isl_keep isl_schedule_node *node)
+{
+  return gpu_group_references_with_traversal(
+    kernel,
+    node,
+    gpu_tree_move_down_to_shared,
+    gpu_tree_move_down_to_thread);
 }
 
 /* Given a description of an array tile "tile" and the "space"

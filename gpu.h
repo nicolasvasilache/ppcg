@@ -436,6 +436,25 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	__isl_take isl_schedule_node *node, int scale,
 	__isl_keep isl_multi_val *sizes);
 
+__isl_give isl_schedule_node *gpu_create_kernel_custom(struct gpu_gen *gen,
+	__isl_take isl_schedule_node *node, int scale,
+	__isl_keep isl_multi_val *sizes);
+
+
+
+isl_schedule_node *tile_band(
+  __isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes);
+
+struct ppcg_callbacks {
+  isl_schedule_node* (*gpu_create_kernel_callback)(
+    struct gpu_gen*, isl_schedule_node*, int, isl_multi_val*);
+  isl_schedule_node* (*mark_thread_callback)(isl_schedule_node*, void*);
+  isl_schedule_node* (*gpu_tree_move_down_to_thread_callback)(
+    isl_schedule_node*, isl_union_set*);
+  isl_schedule_node* (*gpu_tree_move_down_to_shared_callback)(
+    isl_schedule_node*, isl_union_set*);
+};
+
 #if defined(__cplusplus)
 }
 #endif

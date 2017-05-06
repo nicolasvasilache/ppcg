@@ -52,6 +52,11 @@ extern "C" {
 
 int gpu_group_references(struct ppcg_kernel *kernel,
 	__isl_keep isl_schedule_node *node);
+int gpu_group_references_with_traversal(
+  struct ppcg_kernel *kernel,
+  __isl_keep isl_schedule_node *node,
+  isl_schedule_node* (*move_down_to_shared)(isl_schedule_node *, isl_union_set *),
+  isl_schedule_node* (*move_down_to_thread)(isl_schedule_node *, isl_union_set *));
 
 __isl_give isl_printer *gpu_array_ref_group_print_name(
 	struct gpu_array_ref_group *group, __isl_take isl_printer *p);

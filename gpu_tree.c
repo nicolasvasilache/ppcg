@@ -35,7 +35,7 @@
 
 /* Is "node" a mark node with an identifier called "name"?
  */
-static int is_marked(__isl_keep isl_schedule_node *node, const char *name)
+int is_marked(__isl_keep isl_schedule_node *node, const char *name)
 {
 	isl_id *mark;
 	int has_name;

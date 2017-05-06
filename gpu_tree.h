@@ -34,6 +34,8 @@ __isl_give isl_schedule_node *gpu_tree_move_left_to_sync(
 __isl_give isl_schedule_node *gpu_tree_move_right_to_sync(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel);
 
+  int is_marked(__isl_keep isl_schedule_node *node, const char *name);
+
 #if defined(__cplusplus)
 }
 #endif

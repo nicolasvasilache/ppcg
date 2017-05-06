@@ -2599,7 +2599,7 @@ static int is_candidate(__isl_keep isl_schedule_node *node)
  * If there are no such nodes in the subtree at "node" and
  * if "node" is not a filter node, then it is accepted too.
  */
-static int is_outer_tilable(__isl_keep isl_schedule_node *node)
+int is_outer_tilable(__isl_keep isl_schedule_node *node)
 {
 	int tilable;
 	isl_schedule_node *ancestor;
@@ -2792,7 +2792,7 @@ static __isl_give isl_schedule_node *snap_band_to_sizes(
  * Similarly, since the point loops will be mapped to thread ids,
  * we forcibly shift the point loops so that they start at zero.
  */
-static __isl_give isl_schedule_node *tile_band(
+__isl_give isl_schedule_node *tile_band(
 	__isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes)
 {
 	isl_ctx *ctx = isl_schedule_node_get_ctx(node);
@@ -3975,6 +3975,164 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	return node;
 }
 
+__isl_give isl_schedule_node *gpu_create_kernel_custom(struct gpu_gen *gen,
+	__isl_take isl_schedule_node *node, int scale,
+	__isl_keep isl_multi_val *sizes)
+{
+	struct ppcg_kernel *kernel;
+	isl_id *id;
+	isl_schedule_node *node_thread;
+	isl_union_map *host_schedule;
+	isl_union_pw_multi_aff *contraction;
+	isl_set *host_domain;
+	isl_union_set *domain, *expanded;
+	int single_statement;
+
+        assert(gen->options->callbacks);
+
+	kernel = isl_calloc_type(gen->ctx, struct ppcg_kernel);
+	kernel = ppcg_kernel_create_local_arrays(kernel, gen->prog);
+	if (!kernel)
+		return isl_schedule_node_free(node);
+
+	domain = isl_schedule_node_get_domain(node);
+	single_statement = isl_union_set_n_set(domain) == 1;
+
+	kernel->ctx = gen->ctx;
+	kernel->prog = gen->prog;
+	kernel->options = gen->options;
+	kernel->context = extract_context(node, gen->prog);
+	kernel->core = isl_union_set_universe(isl_union_set_copy(domain));
+	contraction = isl_schedule_node_get_subtree_contraction(node);
+	kernel->contraction = isl_union_pw_multi_aff_copy(contraction);
+	expanded = isl_union_set_copy(domain);
+	expanded = isl_union_set_preimage_union_pw_multi_aff(expanded,
+						contraction);
+	kernel->expanded_domain = isl_union_set_copy(expanded);
+	kernel->arrays = accessed_by_domain(expanded, gen->prog);
+	kernel->n_grid = n_outer_coincidence(node);
+	node_thread = isl_schedule_node_copy(node);
+	node_thread = gpu_tree_move_down_to_thread(node_thread, kernel->core);
+	node_thread = isl_schedule_node_child(node_thread, 0);
+	kernel->n_block = n_outer_coincidence(node_thread);
+	isl_schedule_node_free(node_thread);
+	kernel->id = gen->kernel_id++;
+	read_grid_and_block_sizes(kernel, gen);
+
+	kernel->sync_writes = compute_sync_writes(kernel, node);
+
+	host_schedule = isl_schedule_node_get_prefix_schedule_union_map(node);
+	host_domain = isl_set_from_union_set(isl_union_map_range(
+								host_schedule));
+
+	node = atomic_ancestors(node);
+
+	id = isl_id_alloc(gen->ctx, "kernel", kernel);
+	id = isl_id_set_free_user(id, &ppcg_kernel_free_wrap);
+	node = isl_schedule_node_insert_mark(node, isl_id_copy(id));
+
+	if (!single_statement)
+		node = group_statements(node, kernel->id);
+
+	node = isl_schedule_node_child(node, 0);
+	node = split_band(node, kernel->n_grid);
+	kernel->block_ids = ppcg_scop_generate_names(gen->prog->scop,
+						kernel->n_grid, "b");
+	kernel->block_filter = set_schedule_modulo(node, kernel->block_ids,
+						kernel->grid_dim);
+	kernel->grid_size = extract_grid_size(
+          kernel, isl_union_set_copy(domain));
+	if (!kernel->options->wrap)
+		node = snap_band_to_sizes(node, kernel->grid_dim,
+						kernel->options);
+	if (scale)
+		node = scale_band(node, isl_multi_val_copy(sizes));
+	node = isl_schedule_node_parent(node);
+	if (!single_statement)
+		node = isl_schedule_node_parent(node);
+
+	node = insert_guard(
+          node, kernel->context, kernel->grid_size, gen->prog->scop);
+
+
+	kernel->thread_ids = ppcg_scop_generate_names(
+          gen->prog->scop, kernel->n_block, "t");
+        while (1) {
+          isl_schedule_node* pNode = gen->options->callbacks->
+            gpu_tree_move_down_to_thread_callback(node, kernel->core);
+          if (!pNode) { break; }
+          node = isl_schedule_node_child(pNode, 0);
+
+          // Split band to satisfy set_schedule_modulo preconditions
+          node = split_band(node, kernel->n_block);
+          kernel->thread_filter = set_schedule_modulo(
+            node, kernel->thread_ids, kernel->block_dim);
+
+          node = gpu_tree_move_up_to_kernel(node);
+
+          int group_res =
+            gpu_group_references_with_traversal(
+              kernel,
+              node,
+              gen->options->callbacks->gpu_tree_move_down_to_shared_callback,
+              gen->options->callbacks->gpu_tree_move_down_to_thread_callback);
+          if (group_res < 0) { node = isl_schedule_node_free(node); }
+
+          node = gen->options->callbacks->
+            gpu_tree_move_down_to_shared_callback(node, kernel->core);
+          node = isl_schedule_node_delete(node);
+
+          // This genuflexion is necessary because gpu_group does not support
+          // a thread mark with a filter already set underneath
+          node = gen->options->callbacks->
+            gpu_tree_move_down_to_thread_callback(node, kernel->core);
+          node = isl_schedule_node_child(node, 0);
+          node = isl_schedule_node_insert_filter(
+            node, isl_union_set_copy(kernel->thread_filter));
+
+          node = gpu_tree_move_up_to_thread(node);
+          node = isl_schedule_node_delete(node);
+          // TODO: Remove redundant syncs
+          node = gpu_tree_ensure_following_sync(node, kernel);
+
+          node = gpu_tree_move_up_to_kernel(node);
+        } // End up at the kernel node
+
+        // TODO: extract_block_size as an optimization to avoid empty threads
+
+        // Insert context to ensure filter nodes do not introduce parameters
+        // which would trigger errors in codegen
+        node = gpu_tree_move_up_to_kernel(node);
+	node = isl_schedule_node_child(node, 0);
+	node = insert_context(kernel, node);
+
+        // Insert block_filter
+	node = isl_schedule_node_child(node, 0);
+	node = isl_schedule_node_insert_filter(
+           node, isl_union_set_copy(kernel->block_filter));
+
+        // Go back to kernel level to finalize
+        node = gpu_tree_move_up_to_kernel(node);
+
+        localize_bounds(kernel, host_domain);
+        isl_set_free(host_domain);
+        mark_global_arrays(kernel);
+        compute_group_tilings(kernel);
+
+        // insert copies, only when we use private / shared
+	// node = add_copies(kernel, node);
+
+	if (create_kernel_vars(kernel) < 0)
+		node = isl_schedule_node_free(node);
+
+	if (!single_statement)
+		node = isl_schedule_node_parent(node);
+	node = isl_schedule_node_parent(node);
+
+	isl_id_free(id);
+	return node;
+}
+
 /* Insert a zero-dimensional permutable band at "node".
  */
 static __isl_give isl_schedule_node *insert_empty_permutable_band(
@@ -4059,6 +4217,21 @@ static __isl_give isl_schedule_node *try_hybrid_tile(struct gpu_gen *gen,
 	return node;
 }
 
+__isl_give isl_schedule_node* mark_thread(
+  __isl_take isl_schedule_node *node, void *user) {
+  	struct gpu_gen *gen = user;
+	isl_id *id;
+        if (gen->options->callbacks &&
+            gen->options->callbacks->mark_thread_callback)
+        {
+          return gen->options->callbacks->mark_thread_callback(node, user);
+        }
+	id = isl_id_alloc(gen->ctx, "thread", NULL);
+	node = isl_schedule_node_insert_mark(node, id);
+	node = isl_schedule_node_parent(node);
+        return node;
+}
+
 /* If "node" is the outermost permutable band that can be mapped to block and
  * thread identifiers in its branch (or the root of a subtree with
  * no such outer bands),
@@ -4090,7 +4263,6 @@ static __isl_give isl_schedule_node *mark_outer_permutable(
 	int scale;
 	int tile_len;
 	int *tile_size;
-	isl_id *id;
 	isl_multi_val *sizes;
 
 	outer = is_outer_tilable(node);
@@ -4118,16 +4290,30 @@ static __isl_give isl_schedule_node *mark_outer_permutable(
 	if (tile_len < isl_schedule_node_band_n_member(node))
 		node = isl_schedule_node_band_split(node, tile_len);
 	sizes = construct_band_tiles_sizes(node, tile_size);
+
 	node = tile_band(node, isl_multi_val_copy(sizes));
+
 	node = isl_schedule_node_child(node, 0);
+
 	if (gen->options->unroll_gpu_tile)
 		node = ppcg_set_schedule_node_type(node, isl_ast_loop_unroll);
-	id = isl_id_alloc(gen->ctx, "thread", NULL);
-	node = isl_schedule_node_insert_mark(node, id);
-	node = isl_schedule_node_parent(node);
+
+	// id = isl_id_alloc(gen->ctx, "thread", NULL);
+	// node = isl_schedule_node_insert_mark(node, id);
+	// node = isl_schedule_node_parent(node);
+        node = mark_thread(node, user);
 
 	scale = gen->options->scale_tile_loops;
-	node = gpu_create_kernel(gen, node, scale, sizes);
+
+        if (gen->options->callbacks &&
+            gen->options->callbacks->gpu_create_kernel_callback)
+        {
+          node = gen->options->callbacks->gpu_create_kernel_callback(
+            gen, node, scale, sizes);
+        } else {
+          node = gpu_create_kernel(gen, node, scale, sizes);
+        }
+
 	isl_multi_val_free(sizes);
 	free(tile_size);
 

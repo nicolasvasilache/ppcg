@@ -12,6 +12,8 @@ struct ppcg_debug_options {
 	int verbose;
 };
 
+struct ppcg_callbacks;
+
 struct ppcg_options {
 	struct isl_options *isl;
 	struct ppcg_debug_options *debug;
@@ -84,7 +86,9 @@ struct ppcg_options {
 	/* Name of file for saving isl computed schedule or NULL. */
 	char *save_schedule_file;
 	/* Name of file for loading schedule or NULL. */
-	char *load_schedule_file;
+	const char *load_schedule_file;
+
+        struct ppcg_callbacks* callbacks;
 };
 
 ISL_ARG_DECL(ppcg_debug_options, struct ppcg_debug_options,

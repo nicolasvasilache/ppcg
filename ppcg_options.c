@@ -31,6 +31,8 @@ void ppcg_options_set_target_defaults(struct ppcg_options *options)
 		argv[1] = "--schedule-outer-coincidence";
 
 	isl_options_parse(options->isl, 2, argv, ISL_ARG_ALL);
+
+        options->callbacks = NULL;
 }
 
 /* Callback that is called whenever the "target" option is set (to "val").
