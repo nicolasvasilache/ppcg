@@ -8,10 +8,6 @@
 
 #include "ppcg_options.h"
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
-
 __isl_give isl_set *parametrization(__isl_take isl_space *space,
 	int len, int first, __isl_keep isl_id_list *names);
 
@@ -21,9 +17,5 @@ __isl_give isl_schedule *ppcg_get_schedule(isl_ctx *ctx,
 
 __isl_give isl_schedule_node *ppcg_set_schedule_node_type(
 	__isl_take isl_schedule_node *node, enum isl_ast_loop_type type);
-
-#if defined(__cplusplus)
-}
-#endif
 
 #endif

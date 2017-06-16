@@ -664,7 +664,7 @@ static void read_grid_sizes(struct ppcg_kernel *kernel,
  * Store the extracted sizes in "kernel".
  * Add the effectively used sizes to gen->used_sizes.
  */
-static void read_grid_and_block_sizes(struct ppcg_kernel *kernel,
+void read_grid_and_block_sizes(struct ppcg_kernel *kernel,
 	struct gpu_gen *gen)
 {
 	read_block_sizes(kernel, gen->sizes);
@@ -975,7 +975,7 @@ static void check_shared_memory_bound(struct ppcg_kernel *kernel)
  * that is not mapped to private or shared memory as
  * accessing the corresponding global device memory.
  */
-static void mark_global_arrays(struct ppcg_kernel *kernel)
+void mark_global_arrays(struct ppcg_kernel *kernel)
 {
 	int i, j;
 
@@ -997,7 +997,7 @@ static void mark_global_arrays(struct ppcg_kernel *kernel)
 
 /* Compute a tiling for all the array reference groups in "kernel".
  */
-static void compute_group_tilings(struct ppcg_kernel *kernel)
+void compute_group_tilings(struct ppcg_kernel *kernel)
 {
 	int i, j;
 
@@ -1028,7 +1028,7 @@ static void compute_group_tilings(struct ppcg_kernel *kernel)
  * Then, for each block dimension, we compute the maximal value of the block id
  * and add one.
  */
-static __isl_give isl_multi_pw_aff *extract_grid_size(
+__isl_give isl_multi_pw_aff *extract_grid_size(
 	struct ppcg_kernel *kernel, __isl_take isl_union_set *domain)
 {
 	int i;
@@ -1194,7 +1194,7 @@ struct ppcg_kernel *ppcg_kernel_free(struct ppcg_kernel *kernel)
 
 /* Wrapper around ppcg_kernel_free for use as a isl_id_set_free_user callback.
  */
-static void ppcg_kernel_free_wrap(void *user)
+void ppcg_kernel_free_wrap(void *user)
 {
 	struct ppcg_kernel *kernel = user;
 
@@ -1225,7 +1225,7 @@ static void create_kernel_var(isl_ctx *ctx, struct gpu_array_ref_group *group,
 					    isl_val_copy(tile->bound[j].size));
 }
 
-static int create_kernel_vars(struct ppcg_kernel *kernel)
+int create_kernel_vars(struct ppcg_kernel *kernel)
 {
 	int i, j, n;
 
@@ -1297,7 +1297,7 @@ static __isl_give isl_pw_aff *set_universally_zero(__isl_take isl_pw_aff *pa)
  * function.  Since the access function cannot actually access anything,
  * there is no harm in printing the array sizes as zero.
  */
-static void localize_bounds(struct ppcg_kernel *kernel,
+void localize_bounds(struct ppcg_kernel *kernel,
 	__isl_keep isl_set *host_domain)
 {
 	int i, j;
@@ -1343,7 +1343,7 @@ static void localize_bounds(struct ppcg_kernel *kernel,
  * Initialize the "array" field of each local array to point
  * to the corresponding array in "prog".
  */
-static struct ppcg_kernel *ppcg_kernel_create_local_arrays(
+struct ppcg_kernel *ppcg_kernel_create_local_arrays(
 	struct ppcg_kernel *kernel, struct gpu_prog *prog)
 {
 	int i;
@@ -2767,7 +2767,7 @@ static __isl_give isl_multi_val *construct_band_tiles_sizes(
  * The list that "factor" points to is assumed to contain at least
  * as many elements as the number of members in the band.
  */
-static __isl_give isl_schedule_node *snap_band_to_sizes(
+__isl_give isl_schedule_node *snap_band_to_sizes(
 	__isl_take isl_schedule_node *node, int *factor,
 	struct ppcg_options *options)
 {
@@ -2818,7 +2818,7 @@ __isl_give isl_schedule_node *tile_band(
  * Intersect the set of parameter values derived from the host schedule
  * relation with the context of "prog".
  */
-static __isl_give isl_set *extract_context(__isl_keep isl_schedule_node *node,
+__isl_give isl_set *extract_context(__isl_keep isl_schedule_node *node,
 	struct gpu_prog *prog)
 {
 	isl_union_map *schedule;
@@ -2857,7 +2857,7 @@ static __isl_give isl_set *extract_context(__isl_keep isl_schedule_node *node,
  * The instances in "domain" are those that appear
  * in the domains of the access relations in "prog".
  */
-static __isl_give isl_union_set *accessed_by_domain(
+__isl_give isl_union_set *accessed_by_domain(
 	__isl_take isl_union_set *domain, struct gpu_prog *prog)
 {
 	isl_union_map *access;
@@ -2876,7 +2876,7 @@ static __isl_give isl_union_set *accessed_by_domain(
 /* Return the number of outer band members of the band node "node"
  * that are marked coincident.
  */
-static int n_outer_coincidence(__isl_keep isl_schedule_node *node)
+int n_outer_coincidence(__isl_keep isl_schedule_node *node)
 {
 	int i, n;
 
@@ -2892,7 +2892,7 @@ static int n_outer_coincidence(__isl_keep isl_schedule_node *node)
 /* If the band node "node" has more than "n" members, then split off
  * the first "n" of them.
  */
-static __isl_give isl_schedule_node *split_band(
+__isl_give isl_schedule_node *split_band(
 	__isl_take isl_schedule_node *node, int n)
 {
 	int dim;
@@ -2913,7 +2913,7 @@ static __isl_give isl_schedule_node *split_band(
  * elements in "sizes", then some splitting has occurred and we split
  * "sizes" in the same way.
  */
-static __isl_give isl_schedule_node *scale_band(
+__isl_give isl_schedule_node *scale_band(
 	__isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes)
 {
 	int n, dim;
@@ -2993,7 +2993,7 @@ static __isl_give isl_multi_aff *parameter_vector(__isl_take isl_space *space,
  * than or equal to this number.  If it is smaller, then the first
  * elements of "names" are equated to zero.
  */
-static __isl_give isl_union_set *set_schedule_modulo(
+__isl_give isl_union_set *set_schedule_modulo(
 	__isl_keep isl_schedule_node *node, __isl_keep isl_id_list *names,
 	int *size)
 {
@@ -3043,7 +3043,7 @@ static __isl_give isl_union_set *set_schedule_modulo(
  * in the schedule tree to ensure that those bounds hold at "node".
  * This guard is inserted in insert_guard.
  */
-static __isl_give isl_schedule_node *insert_context(struct ppcg_kernel *kernel,
+__isl_give isl_schedule_node *insert_context(struct ppcg_kernel *kernel,
 	__isl_take isl_schedule_node *node)
 {
 	isl_set *context;
@@ -3073,7 +3073,7 @@ static __isl_give isl_schedule_node *insert_context(struct ppcg_kernel *kernel,
  * for each executed instance ("context"), as long as this does not result
  * in a disjunction.
  */
-static __isl_give isl_schedule_node *insert_guard(
+__isl_give isl_schedule_node *insert_guard(
 	__isl_take isl_schedule_node *node, __isl_keep isl_set *context,
 	__isl_keep isl_multi_pw_aff *size, struct ppcg_scop *scop)
 {
@@ -3638,8 +3638,7 @@ static __isl_give isl_schedule_node *atomic(__isl_take isl_schedule_node *node)
  * Do the same for all ancestors.
  * Return a pointer to "node" (in the updated schedule tree).
  */
-static __isl_give isl_schedule_node *atomic_ancestors(
-	__isl_take isl_schedule_node *node)
+__isl_give isl_schedule_node *atomic_ancestors(__isl_take isl_schedule_node *node)
 {
 	int pos;
 
@@ -3693,8 +3692,8 @@ static __isl_give isl_schedule_node *atomic_ancestors(
  * Sychronization is needed after writes to global memory
  * through these references.
  */
-static __isl_give isl_union_set *compute_sync_writes(
-	struct ppcg_kernel *kernel, __isl_keep isl_schedule_node *node)
+__isl_give isl_union_set *compute_sync_writes(
+  struct ppcg_kernel *kernel, __isl_keep isl_schedule_node *node)
 {
 	isl_union_map *local;
 	isl_union_map *may_writes, *shared_access;
@@ -3748,7 +3747,7 @@ static __isl_give isl_union_set *compute_sync_writes(
 /* Group the domain elements into a single space, named kernelX,
  * with X the kernel sequence number "kernel_id".
  */
-static __isl_give isl_schedule_node *group_statements(
+__isl_give isl_schedule_node *group_statements(
 	__isl_take isl_schedule_node *node, int kernel_id)
 {
 	char buffer[20];

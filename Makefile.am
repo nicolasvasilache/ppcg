@@ -104,6 +104,7 @@ pkginclude_HEADERS = \
 	cpu.h \
 	cuda_common.h \
 	cuda.h \
+	extern_cpp.h \
 	gpu_array_tile.h \
 	gpu_group.h \
 	gpu.h \

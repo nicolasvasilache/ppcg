@@ -411,10 +411,6 @@ struct ppcg_kernel {
 	isl_ast_node *tree;
 };
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
-
 int gpu_array_is_scalar(struct gpu_array_info *array);
 int gpu_array_is_read_only_scalar(struct gpu_array_info *array);
 int gpu_array_requires_device_allocation(struct gpu_array_info *array);
@@ -436,15 +432,6 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	__isl_take isl_schedule_node *node, int scale,
 	__isl_keep isl_multi_val *sizes);
 
-__isl_give isl_schedule_node *gpu_create_kernel_custom(struct gpu_gen *gen,
-	__isl_take isl_schedule_node *node, int scale,
-	__isl_keep isl_multi_val *sizes);
-
-
-
-isl_schedule_node *tile_band(
-  __isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes);
-
 struct ppcg_callbacks {
   isl_schedule_node* (*gpu_create_kernel_callback)(
     struct gpu_gen*, isl_schedule_node*, int, isl_multi_val*);
@@ -454,9 +441,5 @@ struct ppcg_callbacks {
   isl_schedule_node* (*gpu_tree_move_down_to_shared_callback)(
     isl_schedule_node*, isl_union_set*);
 };
-
-#if defined(__cplusplus)
-}
-#endif
 
 #endif

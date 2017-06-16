@@ -46,17 +46,8 @@ struct gpu_array_ref_group {
 	struct gpu_stmt_access **refs;
 };
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
-
 int gpu_group_references(struct ppcg_kernel *kernel,
 	__isl_keep isl_schedule_node *node);
-int gpu_group_references_with_traversal(
-  struct ppcg_kernel *kernel,
-  __isl_keep isl_schedule_node *node,
-  isl_schedule_node* (*move_down_to_shared)(isl_schedule_node *, isl_union_set *),
-  isl_schedule_node* (*move_down_to_thread)(isl_schedule_node *, isl_union_set *));
 
 __isl_give isl_printer *gpu_array_ref_group_print_name(
 	struct gpu_array_ref_group *group, __isl_take isl_printer *p);
@@ -70,9 +61,5 @@ struct gpu_array_tile *gpu_array_ref_group_tile(
 	struct gpu_array_ref_group *group);
 struct gpu_array_ref_group *gpu_array_ref_group_free(
 	struct gpu_array_ref_group *group);
-
-#if defined(__cplusplus)
-}
-#endif
 
 #endif

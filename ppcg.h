@@ -10,10 +10,6 @@
 
 #include "ppcg_options.h"
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
-
 isl_ctx* isl_ctx_alloc_with_pet_and_ppcg_options();
 struct pet_options* isl_ctx_get_pet_options(isl_ctx* ctx);
 struct ppcg_options* isl_ctx_get_ppcg_options(isl_ctx* ctx);
@@ -130,9 +126,5 @@ __isl_give isl_schedule *ppcg_compute_schedule(
 	__isl_keep isl_schedule *schedule, struct ppcg_options *options);
 
 __isl_give isl_schedule *compute_cpu_schedule(struct ppcg_scop *ps);
-
-#if defined(__cplusplus)
-}
-#endif
 
 #endif

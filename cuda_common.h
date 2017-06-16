@@ -9,15 +9,7 @@ struct cuda_info {
 	FILE *kernel_h;
 };
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
-
 void cuda_open_files(struct cuda_info *info, const char *input);
 void cuda_close_files(struct cuda_info *info);
-
-#if defined(__cplusplus)
-}
-#endif
 
 #endif
