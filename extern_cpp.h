@@ -125,11 +125,6 @@ __isl_give isl_multi_pw_aff *extract_grid_size(
 __isl_give isl_schedule_node *group_statements(
   __isl_take isl_schedule_node *node, int kernel_id);
 
-__isl_give isl_schedule_node *gpu_create_kernel_custom(
-  struct gpu_gen *gen,
-  __isl_take isl_schedule_node *node, int scale,
-  __isl_keep isl_multi_val *sizes);
-
 /* Insert a context node at "node" introducing the block and thread
  * identifiers along with their bounds, which are stored in kernel->grid_size
  * and kernel->block_dim.
