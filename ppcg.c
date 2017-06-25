@@ -28,7 +28,6 @@
 #include <isl/ast.h>
 #include <isl/id_to_ast_expr.h>
 #include <isl/ast_build.h>
-#include <isl/schedule.h>
 #include <pet.h>
 #include "ppcg.h"
 #include "ppcg_options.h"
@@ -1108,7 +1107,7 @@ struct ppcg_options* isl_ctx_get_ppcg_options(isl_ctx* ctx) {
   return options->ppcg;
 }
 
-int main(int argc, char **argv)
+int ppcg_main(int argc, char **argv)
 {
 	int r;
 	isl_ctx *ctx = isl_ctx_alloc_with_pet_and_ppcg_options();
