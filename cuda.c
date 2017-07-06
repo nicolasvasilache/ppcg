@@ -660,6 +660,40 @@ static __isl_give isl_printer *print_host_user(__isl_take isl_printer *p,
 	return p;
 }
 
+/* Print the kernels without emitting any host code.
+ * If host code other than launching the kernel is required, return NULL.
+ *
+ * Kernels are printed to the file pointer to by
+ * ((struct print_host_user_data *) user)->cuda
+ * and not using the printer, for consistency with the the full code generator.
+ */
+static __isl_give isl_printer *print_kernel_only_user(__isl_take isl_printer *p,
+	__isl_take isl_ast_print_options *print_options,
+	__isl_keep isl_ast_node *node, void *user)
+{
+	int is_kernel;
+	struct print_host_user_data *data;
+	struct ppcg_kernel *kernel;
+	isl_id *id;
+
+	isl_ast_print_options_free(print_options);
+
+	data = (struct print_host_user_data *) user;
+	id = isl_ast_node_get_annotation(node);
+	if (!id)
+		return isl_printer_free(p);
+
+	is_kernel = strcmp(isl_id_get_name(id), "user");
+	isl_id_free(id);
+	if (!is_kernel)
+		return isl_printer_free(p);
+	kernel = isl_id_get_user(id);
+
+	print_kernel(data->prog, kernel, data->cuda);
+
+	return p;
+}
+
 static __isl_give isl_printer *print_host_code(__isl_take isl_printer *p,
 	struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
 	struct cuda_info *cuda)
@@ -669,8 +703,12 @@ static __isl_give isl_printer *print_host_code(__isl_take isl_printer *p,
 	struct print_host_user_data data = { cuda, prog };
 
 	print_options = isl_ast_print_options_alloc(ctx);
-	print_options = isl_ast_print_options_set_print_user(print_options,
-						&print_host_user, &data);
+	if (prog->scop->options->print_host_code)
+		print_options = isl_ast_print_options_set_print_user(
+			print_options, &print_host_user, &data);
+	else
+		print_options = isl_ast_print_options_set_print_user(
+			print_options, &print_kernel_only_user, &data);
 
 	p = gpu_print_macros(p, tree);
 	p = isl_ast_node_print(tree, p, print_options);

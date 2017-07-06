@@ -5308,6 +5308,9 @@ static __isl_give isl_schedule *map_to_device(struct gpu_gen *gen,
 	isl_union_map *prefix;
 	isl_union_pw_multi_aff *contraction;
 	struct gpu_prog *prog;
+	int transform_on_host;
+
+	transform_on_host = gen->options->print_host_code;
 
 	context = isl_set_copy(gen->prog->context);
 	context = isl_set_from_params(context);
@@ -5322,22 +5325,27 @@ static __isl_give isl_schedule *map_to_device(struct gpu_gen *gen,
 	isl_schedule_free(schedule);
 	node = isl_schedule_node_child(node, 0);
 	node = isl_schedule_node_child(node, 0);
-	node = isolate_permutable_subtrees(node, gen->prog);
-	domain = isl_schedule_node_get_domain(node);
-	contraction = isl_schedule_node_get_subtree_contraction(node);
-	domain = isl_union_set_preimage_union_pw_multi_aff(domain,
-				    isl_union_pw_multi_aff_copy(contraction));
-	prefix = isl_schedule_node_get_prefix_schedule_union_map(node);
-	prefix = isl_union_map_preimage_domain_union_pw_multi_aff(prefix,
-				    contraction);
+	if (transform_on_host) {
+		node = isolate_permutable_subtrees(node, gen->prog);
+		domain = isl_schedule_node_get_domain(node);
+		contraction = isl_schedule_node_get_subtree_contraction(node);
+		domain = isl_union_set_preimage_union_pw_multi_aff(domain,
+			isl_union_pw_multi_aff_copy(contraction));
+		prefix = isl_schedule_node_get_prefix_schedule_union_map(node);
+		prefix = isl_union_map_preimage_domain_union_pw_multi_aff(
+			prefix, contraction);
+	}
 	node = mark_kernels(gen, node);
-	node = add_to_from_device(node, domain, prefix, gen->prog);
+	if (transform_on_host)
+		node = add_to_from_device(node, domain, prefix, gen->prog);
 	node = isl_schedule_node_root(node);
 	node = isl_schedule_node_child(node, 0);
 	node = isl_schedule_node_child(node, 0);
 	node = isl_schedule_node_insert_guard(node, guard);
 	node = isl_schedule_node_child(node, 0);
-	node = add_init_clear_device(node);
+
+	if (transform_on_host)
+		node = add_init_clear_device(node);
 	schedule = isl_schedule_node_get_schedule(node);
 	isl_schedule_node_free(node);
 

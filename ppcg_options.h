@@ -47,6 +47,9 @@ struct ppcg_options {
 	/* Maximal amount of shared memory. */
 	int max_shared_memory;
 
+	/* Print host code (CUDA target). */
+	int print_host_code;
+
 	/* The target we generate code for. */
 	int target;
 
