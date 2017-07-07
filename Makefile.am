@@ -58,6 +58,7 @@ ppcg_SOURCES = \
 	ppcg_options.h \
 	ppcg.c \
 	ppcg.h \
+	ppcg_main.c \
 	print.c \
 	print.h \
 	util.c \
