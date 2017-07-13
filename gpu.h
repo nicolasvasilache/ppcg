@@ -448,10 +448,6 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 
 struct ppcg_callbacks {
   isl_schedule_node* (*mark_thread_callback)(isl_schedule_node*, void*);
-  isl_schedule_node* (*gpu_tree_move_down_to_thread_callback)(
-    isl_schedule_node*, isl_union_set*);
-  isl_schedule_node* (*gpu_tree_move_down_to_shared_callback)(
-    isl_schedule_node*, isl_union_set*);
 };
 
 #endif
