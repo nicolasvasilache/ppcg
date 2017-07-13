@@ -208,6 +208,12 @@ struct gpu_gen {
 		struct gpu_types *types, void *user);
 	void *print_user;
 
+        /* Callback for generating nodes with ppcg_kernel attached. */
+        __isl_give isl_schedule_node *(*generate_kernel)(
+		struct gpu_gen *, __isl_take isl_schedule_node *node,
+		int, isl_multi_val *, void *user);
+        void *generate_kernel_user;
+
 	struct gpu_prog *prog;
 	/* The generated AST. */
 	isl_ast_node *tree;
@@ -422,6 +428,14 @@ void *gpu_prog_free(struct gpu_prog *prog);
 
 int ppcg_kernel_requires_array_argument(struct ppcg_kernel *kernel, int i);
 
+int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
+	struct ppcg_options *options,
+	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
+		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
+		struct gpu_types *types, void *user), void *user,
+        __isl_give isl_schedule_node *(*generate_kernel)(
+		struct gpu_gen *, __isl_take isl_schedule_node *node,
+		int, isl_multi_val *, void *user), void *user2);
 int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 	struct ppcg_options *options,
 	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
@@ -433,13 +447,7 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	__isl_keep isl_multi_val *sizes);
 
 struct ppcg_callbacks {
-  isl_schedule_node* (*gpu_create_kernel_callback)(
-    struct gpu_gen*, isl_schedule_node*, int, isl_multi_val*);
   isl_schedule_node* (*mark_thread_callback)(isl_schedule_node*, void*);
-  isl_schedule_node* (*gpu_tree_move_down_to_thread_callback)(
-    isl_schedule_node*, isl_union_set*);
-  isl_schedule_node* (*gpu_tree_move_down_to_shared_callback)(
-    isl_schedule_node*, isl_union_set*);
 };
 
 #endif
