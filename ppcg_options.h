@@ -28,6 +28,11 @@ struct ppcg_options {
 
 	/* Assume all parameters are non-negative. */
 	int non_negative_parameters;
+
+	/* Override PET-extracted context with the one in ctx
+	   (default is interect). */
+	int override_context;
+
 	char *ctx;
 	char *sizes;
 
