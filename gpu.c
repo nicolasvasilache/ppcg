@@ -4146,11 +4146,10 @@ static __isl_give isl_schedule_node *mark_outer_permutable(
 
 	scale = gen->options->scale_tile_loops;
 
-        if (gen->options->callbacks &&
-            gen->options->callbacks->gpu_create_kernel_callback)
+        if (gen->generate_kernel)
         {
-          node = gen->options->callbacks->gpu_create_kernel_callback(
-            gen, node, scale, sizes);
+          node = gen->generate_kernel(gen, node, scale, sizes,
+		gen->generate_kernel_user);
         } else {
           node = gpu_create_kernel(gen, node, scale, sizes);
         }
@@ -5731,12 +5730,17 @@ static __isl_give isl_printer *generate_wrap(__isl_take isl_printer *p,
 
 /* Transform the code in the file called "input" by replacing
  * all scops by corresponding GPU code and write the results to "out".
+ * Use the "generate_kernel" callback to transform the schedule tree node
+ * marked as kernel; if callback is NULL, use gpu_create_kernel instead.
  */
-int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
+int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 	struct ppcg_options *options,
 	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
 		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
-		struct gpu_types *types, void *user), void *user)
+		struct gpu_types *types, void *user), void *user,
+        __isl_give isl_schedule_node *(*generate_kernel)(
+		struct gpu_gen *, __isl_take isl_schedule_node *node,
+		int, isl_multi_val *, void *user), void *user2)
 {
 	struct gpu_gen gen;
 	int r;
@@ -5748,6 +5752,8 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 	gen.kernel_id = 0;
 	gen.print = print;
 	gen.print_user = user;
+        gen.generate_kernel = generate_kernel;
+        gen.generate_kernel_user = user2;
 	gen.types.n = 0;
 	gen.types.name = NULL;
 
@@ -5769,6 +5775,19 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 	free(gen.types.name);
 
 	return r;
+}
+
+/* Transform the code in the file called "input" by replacing
+ * all scops by corresponding GPU code and write the results to "out".
+ */
+int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
+	struct ppcg_options *options,
+	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
+		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
+		struct gpu_types *types, void *user), void *user)
+{
+	return generate_gpu_custom(ctx, input, out, options, print, user,
+                                   NULL, NULL);
 }
 
 /* Compute the set of inner array elements that may have their values
