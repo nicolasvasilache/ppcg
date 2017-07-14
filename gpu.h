@@ -214,6 +214,12 @@ struct gpu_gen {
 		int, isl_multi_val *, void *user);
         void *generate_kernel_user;
 
+	/* Callback for adding custom schedule constraints. */
+	__isl_give isl_basic_set *(*add_schedule_constraints)(
+		__isl_take isl_basic_set *, int, int,
+		__isl_keep isl_id_list *, int *, int *, void *);
+	void *add_schedule_constraints_user;
+
 	struct gpu_prog *prog;
 	/* The generated AST. */
 	isl_ast_node *tree;
@@ -433,6 +439,10 @@ int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
 		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
 		struct gpu_types *types, void *user), void *user,
+	__isl_give isl_basic_set *(*add_custom_constraints)(
+		__isl_take isl_basic_set *, int, int,
+		__isl_keep isl_id_list *, int *, int *, void *),
+	void *userc,
         __isl_give isl_schedule_node *(*generate_kernel)(
 		struct gpu_gen *, __isl_take isl_schedule_node *node,
 		int, isl_multi_val *, void *user), void *user2);

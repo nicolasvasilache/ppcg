@@ -4440,6 +4440,11 @@ static __isl_give isl_schedule *compute_schedule(struct gpu_gen *gen)
 	isl_schedule *schedule;
 
 	sc = construct_schedule_constraints(gen->prog);
+	if (gen->add_schedule_constraints)
+		sc = isl_schedule_constraints_set_custom_constraint_callback(sc,
+			gen->add_schedule_constraints,
+			gen->add_schedule_constraints_user);
+	
 	schedule = gen->prog->scop->schedule;
 	schedule = ppcg_compute_schedule(sc, schedule, gen->options);
 
@@ -5738,6 +5743,10 @@ int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
 		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
 		struct gpu_types *types, void *user), void *user,
+	__isl_give isl_basic_set *(*add_custom_constraints)(
+		__isl_take isl_basic_set *, int, int,
+		__isl_keep isl_id_list *, int *, int *, void *),
+	void *userc,
         __isl_give isl_schedule_node *(*generate_kernel)(
 		struct gpu_gen *, __isl_take isl_schedule_node *node,
 		int, isl_multi_val *, void *user), void *user2)
@@ -5754,6 +5763,8 @@ int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 	gen.print_user = user;
         gen.generate_kernel = generate_kernel;
         gen.generate_kernel_user = user2;
+	gen.add_schedule_constraints = add_custom_constraints;
+	gen.add_schedule_constraints_user = userc;
 	gen.types.n = 0;
 	gen.types.name = NULL;
 
@@ -5787,7 +5798,7 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 		struct gpu_types *types, void *user), void *user)
 {
 	return generate_gpu_custom(ctx, input, out, options, print, user,
-                                   NULL, NULL);
+                                   NULL, NULL, NULL, NULL);
 }
 
 /* Compute the set of inner array elements that may have their values
