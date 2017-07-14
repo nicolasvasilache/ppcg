@@ -951,8 +951,18 @@ static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
 	ps->options = options;
 	ps->start = pet_loc_get_start(scop->loc);
 	ps->end = pet_loc_get_end(scop->loc);
-	ps->context = isl_set_copy(scop->context);
-	ps->context = set_intersect_str(ps->context, options->ctx);
+        if (options->override_context) {
+		if (options->ctx) {
+			ps->context = isl_set_read_from_str(ctx, options->ctx);
+		} else {
+			isl_space *space;
+			space = isl_set_get_space(scop->context);
+			ps->context = isl_set_empty(space);
+		}
+	} else {
+		ps->context = isl_set_copy(scop->context);
+		ps->context = set_intersect_str(ps->context, options->ctx);
+	}
 	if (options->non_negative_parameters) {
 		isl_space *space = isl_set_get_space(ps->context);
 		isl_set *nn = isl_set_nat_universe(space);

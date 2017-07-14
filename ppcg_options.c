@@ -93,6 +93,8 @@ ISL_ARG_BOOL(struct ppcg_options, use_shared_memory, 0, "shared-memory", 1,
 	"use shared memory in kernel code")
 ISL_ARG_BOOL(struct ppcg_options, use_private_memory, 0, "private-memory", 1,
 	"use private memory in kernel code")
+ISL_ARG_BOOL(struct ppcg_options, override_context, 0, "override-context", 0,
+	"override PET-extracted context with the one provided in --ctx")
 ISL_ARG_STR(struct ppcg_options, ctx, 0, "ctx", "context", NULL,
     "Constraints on parameters")
 ISL_ARG_BOOL(struct ppcg_options, non_negative_parameters, 0,
