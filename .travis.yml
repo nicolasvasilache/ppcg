@@ -1,0 +1,28 @@
+
+language: c++
+
+compiler:
+        - gcc
+
+dist: trusty
+
+sudo: required
+
+env:
+        - CMAKE_VERSION=cmake CORES=2
+
+cache:
+        apt: true
+        directories:
+        - /tmp/clang+llvm
+        - /tmp/apt-cache/
+
+before_script:
+        - export APT_CACHE_DIR=/tmp/apt-cache && mkdir -pv $APT_CACHE_DIR
+        - sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y && sudo apt-get update -yq && sudo apt-get -o dir::cache::archives="$APT_CACHE_DIR" install -y automake gcc-4.9 g++-4.9 git cmake3 libgmp3-dev libtool
+
+script:
+        - sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.9 90
+        - sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.9 90
+        - .travis/install-llvm-clang-401.sh
+        - .travis/build.sh
