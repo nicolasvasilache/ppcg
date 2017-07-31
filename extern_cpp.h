@@ -31,6 +31,52 @@ __isl_give isl_printer *print_cuda(__isl_take isl_printer *p,
 // gpu.c
 ////////////////////////////////////////////////////////////////////////////////
 
+/* For each array reference group that is mapped to private or shared memory,
+ * add copy statements to the schedule tree of "node"
+ * for reading from global memory to private or shared memory
+ * and for writing back.
+ * On input, "node" points to the kernel node, and it is moved
+ * back there on output.
+ */
+__isl_give isl_schedule_node *add_copies(struct ppcg_kernel *kernel,
+  __isl_take isl_schedule_node *node);
+
+/* Insert a synchronization node in the schedule tree of "node"
+ * after the core computation of "kernel" at the level of the band
+ * that is mapped to threads, except if that level is equal to
+ * that of the band that is mapped to blocks or if there are no writes
+ * to global or shared memory in the core computation that require
+ * synchronization.
+ * If there are any writes to shared memory and the shared memory
+ * copying is performed at the same level, then synchronization
+ * is needed between the core and the copying anyway, so we might
+ * as well add it here.  If the copying is performed at a higher
+ * level, then different iterations of intermediate schedule dimensions
+ * may have a different mapping from between shared memory elements and
+ * threads, such that synchronization is required after the core.
+ * "node" is assumed to point to the kernel node.
+ *
+ * If the shared and the thread mark point to the same node, then make
+ * sure the synchronization is inserted outside of the shared mark.
+ */
+__isl_give isl_schedule_node *add_sync(struct ppcg_kernel *kernel,
+  __isl_take isl_schedule_node *node);
+
+/* If max_shared_memory is not set to infinity (-1), then make
+ * sure that the total amount of shared memory required by the
+ * array reference groups mapped to shared memory by "kernel"
+ * is no larger than this maximum.
+ *
+ * We apply a greedy approach and discard (keep in global memory)
+ * those groups that would result in a total memory size that
+ * is larger than the maximum.
+ *
+ * This function should be called after any function that may
+ * affect the decision on whether to place a reference group
+ * in private, shared or global memory.
+ */
+void check_shared_memory_bound(struct ppcg_kernel *kernel);
+
 /* Return the set of outer array elements accessed by
  * by the statement instances in "domain" in "prog".
  * The instances in "domain" are those that appear
