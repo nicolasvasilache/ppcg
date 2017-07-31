@@ -6,6 +6,7 @@ extern "C" {
 #include "ppcg/cuda.h"
 #include "ppcg/cuda_common.h"
 #include "ppcg/gpu.h"
+#include "ppcg/gpu_group.h"
 #include "ppcg/gpu_print.h"
 #include "ppcg/gpu_tree.h"
 #include "ppcg/ppcg.h"
@@ -280,6 +281,31 @@ int gpu_group_references_with_traversal(
   __isl_keep isl_schedule_node *node,
   isl_schedule_node* (*move_down_to_shared)(isl_schedule_node *, isl_union_set *),
   isl_schedule_node* (*move_down_to_thread)(isl_schedule_node *, isl_union_set *));
+
+int compute_group_bounds(struct ppcg_kernel *kernel,
+  struct gpu_array_ref_group *group, struct gpu_group_data *data);
+
+int accesses_overlap(struct gpu_array_ref_group *group1,
+  struct gpu_array_ref_group *group2);
+
+int depth_accesses_overlap(struct gpu_array_ref_group *group1,
+  struct gpu_array_ref_group *group2);
+
+void check_can_be_private_live_ranges(struct ppcg_kernel *kernel,
+  __isl_keep isl_schedule_node *node);
+
+struct gpu_array_ref_group *join_groups_and_free(
+  struct gpu_array_ref_group *group1,
+  struct gpu_array_ref_group *group2);
+
+struct gpu_array_ref_group *join_groups(
+  struct gpu_array_ref_group *group1,
+  struct gpu_array_ref_group *group2);
+
+int join_all_groups(int n, struct gpu_array_ref_group **groups);
+
+int smaller_tile(struct gpu_array_tile *tile,
+  struct gpu_array_tile *tile1, struct gpu_array_tile *tile2);
 
 
 }
