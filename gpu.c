@@ -4445,6 +4445,11 @@ static __isl_give isl_schedule *compute_schedule(struct gpu_gen *gen)
 			gen->add_schedule_constraints,
 			gen->add_schedule_constraints_user);
 	
+	if (gen->merge_callback) {
+		sc = isl_schedule_constraints_set_merge_callback(sc,
+			gen->merge_callback, gen->merge_callback_user);
+	}
+
 	schedule = gen->prog->scop->schedule;
 	schedule = ppcg_compute_schedule(sc, schedule, gen->options);
 
@@ -5737,6 +5742,8 @@ static __isl_give isl_printer *generate_wrap(__isl_take isl_printer *p,
  * all scops by corresponding GPU code and write the results to "out".
  * Use the "generate_kernel" callback to transform the schedule tree node
  * marked as kernel; if callback is NULL, use gpu_create_kernel instead.
+ * Use the "merge_callback" in the schedule clustering heuristic, providing it
+ * with "merge_callback_user" as the last argument.
  */
 int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 	struct ppcg_options *options,
@@ -5747,6 +5754,10 @@ int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 		__isl_take isl_basic_set *, int, int,
 		__isl_keep isl_id_list *, int *, int *, void *),
 	void *userc,
+	isl_bool (*merge_callback)(__isl_take isl_union_map *original_schedule,
+		__isl_take isl_union_map *updated_schedule,
+		int n_coincident_after, int n_coincident_before,
+		int is_along_edge, void *user), void *merge_callback_user,
         __isl_give isl_schedule_node *(*generate_kernel)(
 		struct gpu_gen *, __isl_take isl_schedule_node *node,
 		int, isl_multi_val *, void *user), void *user2)
@@ -5767,6 +5778,8 @@ int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 	gen.add_schedule_constraints_user = userc;
 	gen.types.n = 0;
 	gen.types.name = NULL;
+	gen.merge_callback = merge_callback;
+	gen.merge_callback_user = merge_callback_user;
 
 	if (options->debug->dump_sizes) {
 		isl_space *space = isl_space_params_alloc(ctx, 0);
@@ -5798,7 +5811,7 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 		struct gpu_types *types, void *user), void *user)
 {
 	return generate_gpu_custom(ctx, input, out, options, print, user,
-                                   NULL, NULL, NULL, NULL);
+                                   NULL, NULL, NULL, NULL, NULL, NULL);
 }
 
 /* Compute the set of inner array elements that may have their values

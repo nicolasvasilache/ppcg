@@ -220,6 +220,13 @@ struct gpu_gen {
 		__isl_keep isl_id_list *, int *, int *, void *);
 	void *add_schedule_constraints_user;
 
+	/* Callback for merge/fusion heuristic. */
+	isl_bool (*merge_callback)(__isl_take isl_union_map *original_schedule,
+		__isl_take isl_union_map *updated_schedule,
+		int n_coincident_after, int n_coincident_before,
+		int is_along_edge, void *user);
+	void *merge_callback_user;
+
 	struct gpu_prog *prog;
 	/* The generated AST. */
 	isl_ast_node *tree;
@@ -443,6 +450,10 @@ int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 		__isl_take isl_basic_set *, int, int,
 		__isl_keep isl_id_list *, int *, int *, void *),
 	void *userc,
+	isl_bool (*merge_callback)(__isl_take isl_union_map *original_schedule,
+		__isl_take isl_union_map *updated_schedule,
+		int n_coincident_after, int n_coincident_before,
+		int is_along_edge, void *user), void *merge_callback_user,
         __isl_give isl_schedule_node *(*generate_kernel)(
 		struct gpu_gen *, __isl_take isl_schedule_node *node,
 		int, isl_multi_val *, void *user), void *user2);
