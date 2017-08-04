@@ -586,7 +586,7 @@ static int compute_tile_depth(struct gpu_group_data *data,
 {
 	int i, j;
 
-	for (j = tile->depth - 1; j >= data->kernel_depth; --j) {
+	for (j = tile->depth - 1; j >= data->shared_depth; --j) {
 		for (i = 0; i < tile->n; ++i) {
 			isl_aff *lb;
 			isl_aff *shift;
