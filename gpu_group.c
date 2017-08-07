@@ -1126,7 +1126,7 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 		return -1;
 	}
 	group->private_tile->requires_unroll = requires_unroll;
-	if (!can_tile(acc, group->private_tile))
+	if (data->n_thread == 0 || !can_tile(acc, group->private_tile))
 		group->private_tile = gpu_array_tile_free(group->private_tile);
 
 	isl_map_free(acc);
