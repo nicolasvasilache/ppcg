@@ -579,7 +579,7 @@ static int access_is_bijective(struct gpu_group_data *data,
 /* Compute the number of outer schedule tile dimensions that affect
  * the offset of "tile".
  * If there is no such dimension, then return the index
- * of the first kernel dimension, i.e., data->kernel_depth.
+ * of the first dimension under the "shared" mark, i.e., data->shared_depth.
  */
 static int compute_tile_depth(struct gpu_group_data *data,
 	struct gpu_array_tile *tile)
@@ -1012,12 +1012,15 @@ static __isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
  *
  * For private memory tiles, the number of schedule dimensions that
  * affect the offset is computed and stored in tile->depth, with
- * a lower bound of data->kernel_depth.  If this depth is smaller
+ * a lower bound of data->shared_depth.  If this depth is smaller
  * than the minimal depth that still ensures that every element
  * is accessed by a single thread, then the depth is raised
  * to this minimal depth.
  * The fields of the tile are then adjusted to only refer to the tile->depth
  * outer schedule dimensions.
+ *
+ * Private memory tiles are not computed if there are no parallel threads,
+ * i.e. n_threads == 0.
  *
  * We also check that the index expression only depends on parallel
  * loops.  That way, we can move those loops innermost and unroll them.
