@@ -931,7 +931,7 @@ static __isl_give isl_pw_multi_aff *compute_sched_to_copy(
  * affect the decision on whether to place a reference group
  * in private, shared or global memory.
  */
-static void check_shared_memory_bound(struct ppcg_kernel *kernel)
+void check_shared_memory_bound(struct ppcg_kernel *kernel)
 {
 	int i, j;
 	isl_val *left, *size;
@@ -3149,7 +3149,7 @@ static __isl_give isl_schedule_node *unroll(__isl_take isl_schedule_node *node)
  * If the shared and the thread mark point to the same node, then make
  * sure the synchronization is inserted outside of the shared mark.
  */
-static __isl_give isl_schedule_node *add_sync(struct ppcg_kernel *kernel,
+__isl_give isl_schedule_node *add_sync(struct ppcg_kernel *kernel,
 	__isl_take isl_schedule_node *node)
 {
 	int depth;
@@ -3604,7 +3604,7 @@ static __isl_give isl_schedule_node *add_copies_group(
  * On input, "node" points to the kernel node, and it is moved
  * back there on output.
  */
-static __isl_give isl_schedule_node *add_copies(struct ppcg_kernel *kernel,
+__isl_give isl_schedule_node *add_copies(struct ppcg_kernel *kernel,
 	__isl_take isl_schedule_node *node)
 {
 	int i, j;

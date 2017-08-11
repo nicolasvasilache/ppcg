@@ -400,15 +400,45 @@ static void print_kernel_iterators(FILE *out, struct ppcg_kernel *kernel)
 	print_iterators(out, type, kernel->thread_ids, thread_dims);
 }
 
+static __isl_give isl_printer *print_type_strip_const(__isl_take isl_printer *p,
+	struct ppcg_kernel_var *var)
+{
+	const char kw_const[] = "const ";
+	char *pos;
+	char *type;
+
+	if ((pos = strstr(var->array->type, kw_const))) {
+		size_t full_length = strlen(var->array->type);
+		size_t length = full_length - sizeof(kw_const) + 1;
+		size_t prefix_length = pos - var->array->type;
+		type = isl_alloc_array(isl_printer_get_ctx(p),
+			char, length);
+		strncpy(type, var->array->type, prefix_length);
+		strncpy(type + prefix_length, pos + sizeof(kw_const) - 1,
+			full_length - prefix_length - sizeof(kw_const) + 1);
+		type[length] = 0;
+		p = isl_printer_print_str(p, type);
+		free(type);
+	} else {
+		p = isl_printer_print_str(p, var->array->type);
+	}
+	return p;
+}
+
 static __isl_give isl_printer *print_kernel_var(__isl_take isl_printer *p,
 	struct ppcg_kernel_var *var)
 {
 	int j;
 
 	p = isl_printer_start_line(p);
-	if (var->type == ppcg_access_shared)
+	if (var->type == ppcg_access_shared) {
 		p = isl_printer_print_str(p, "__shared__ ");
-	p = isl_printer_print_str(p, var->array->type);
+		p = print_type_strip_const(p, var);
+	} else if (var->type == ppcg_access_private) {
+		p = print_type_strip_const(p, var);
+	} else {
+		p = isl_printer_print_str(p, var->array->type);
+	}
 	p = isl_printer_print_str(p, " ");
 	p = isl_printer_print_str(p,  var->name);
 	for (j = 0; j < var->array->n_index; ++j) {
