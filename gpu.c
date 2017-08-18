@@ -618,17 +618,17 @@ static void read_block_sizes(struct ppcg_kernel *kernel,
 		kernel->n_block = 3;
 	switch (kernel->n_block) {
 	case 1:
-                kernel->block_dim[0] = 1; //512;
-                break;
-        case 2:
-                kernel->block_dim[0] = 1; //32;
-                kernel->block_dim[1] = 1; //16;
-                break;
+		kernel->block_dim[0] = 1; //512;
+		break;
+	case 2:
+		kernel->block_dim[0] = 1; //32;
+		kernel->block_dim[1] = 1; //16;
+		break;
 	default:
-                kernel->block_dim[0] = 1; //32;
-                kernel->block_dim[1] = 1; //4;
-                kernel->block_dim[2] = 1; //4;
-                break;
+		kernel->block_dim[0] = 1; //32;
+		kernel->block_dim[1] = 1; //4;
+		kernel->block_dim[2] = 1; //4;
+		break;
 	}
 
 	size = extract_sizes(sizes, "block", kernel->id);
@@ -647,11 +647,11 @@ static void read_grid_sizes(struct ppcg_kernel *kernel,
 		kernel->n_grid = 2;
 	switch (kernel->n_grid) {
 	case 1:
-                kernel->grid_dim[0] = 1;//32768;
+		kernel->grid_dim[0] = 1;//32768;
 		break;
 	default:
-                kernel->grid_dim[0] = 1; //256;
-                kernel->grid_dim[1] = 1; //256;
+		kernel->grid_dim[0] = 1; //256;
+		kernel->grid_dim[1] = 1; //256;
 		break;
 	}
 
