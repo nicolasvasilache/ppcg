@@ -969,8 +969,6 @@ static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
 		ps->context = isl_set_intersect(ps->context, nn);
 	}
 	ps->domain = collect_non_kill_domains(scop);
-	ps->domain = isl_union_set_intersect(
-		ps->domain, isl_union_set_from_set(isl_set_copy(ps->context)));
 
 	ps->call = collect_call_domains(scop);
 	ps->tagged_reads = pet_scop_get_tagged_may_reads(scop);
@@ -982,8 +980,6 @@ static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
 	ps->tagged_must_kills = pet_scop_get_tagged_must_kills(scop);
 	ps->must_kills = pet_scop_get_must_kills(scop);
 	ps->schedule = isl_schedule_copy(scop->schedule);
-	ps->schedule = isl_schedule_gist_domain_params(
-		ps->schedule, isl_set_copy(ps->context));
 
 	ps->pet = scop;
 	ps->independence = isl_union_map_empty(isl_set_get_space(ps->context));
