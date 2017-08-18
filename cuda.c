@@ -446,6 +446,18 @@ static __isl_give isl_printer *print_kernel_var(__isl_take isl_printer *p,
 
 		p = isl_printer_print_str(p, "[");
 		v = isl_vec_get_element_val(var->size, j);
+		/* Always pad to nearest >= odd value, this guarantees a best
+		 * effort solution to shared memory bank conflicts within 2x
+		 * of best. For guaranteed conflict resolution, just use
+		 * vector types.
+		 */
+		if (var->array->n_index > 1 && j == var->array->n_index - 1) {
+			if (isl_val_is_zero(isl_val_mod(isl_val_copy(v),
+				isl_val_int_from_ui(
+					isl_val_get_ctx(v), 2)))) {
+				v = isl_val_add_ui(v, 1);
+			}
+		}
 		p = isl_printer_print_val(p, v);
 		isl_val_free(v);
 		p = isl_printer_print_str(p, "]");
