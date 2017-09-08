@@ -1061,6 +1061,7 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 	int r = 0;
 	int requires_unroll;
 	int unique_depth;
+	isl_union_set *extent;
 
 	if (!use_shared && !use_private)
 		return 0;
@@ -1072,6 +1073,8 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 		return 0;
 
 	access = gpu_array_ref_group_access_relation(group, 1, 1);
+	extent = isl_union_set_from_set(isl_set_copy(group->array->extent));
+	access = isl_union_map_intersect_range(access, extent);
 	local = localize_access(data, isl_union_map_copy(access));
 	no_reuse = isl_union_map_is_injective(local);
 	if (no_reuse < 0)
@@ -1088,6 +1091,7 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 		group->shared_tile = gpu_array_tile_create(ctx,
 							group->array->n_index);
 		acc = shared_access(group, access, data);
+		acc = isl_map_intersect_range(acc, isl_set_copy(group->array->extent));
 		if (!group->shared_tile)
 			r = -1;
 		else if (!can_tile(acc, group->shared_tile))
