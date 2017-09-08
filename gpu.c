@@ -690,6 +690,7 @@ static void *free_stmts(struct gpu_stmt *stmts, int n)
 			isl_id_free(access->ref_id);
 			isl_map_free(access->access);
 			isl_map_free(access->tagged_access);
+			isl_pw_aff_free(access->indirect_index_expr);
 			free(access);
 		}
 
@@ -5402,11 +5403,13 @@ static __isl_give isl_schedule *map_to_device(struct gpu_gen *gen,
  * "single_expression" is set if the access expressions belong to
  * an expression statement (i.e., a statement without internal control).
  * "any_to_outer" maps all intermediate arrays to their outer arrays.
+ * "stmt" is the statement, for which the access data is extracted.
  */
 struct ppcg_extract_access_data {
 	struct gpu_stmt_access **next_access;
 	int single_expression;
 	isl_union_map *any_to_outer;
+	struct gpu_stmt *stmt;
 };
 
 /* Given a tagged access relation to a single array "tagged", extract it
@@ -5533,6 +5536,144 @@ static isl_bool accesses_fixed_element(__isl_keep pet_expr *expr)
 	return fixed;
 }
 
+/* For piecewise aff with defined over a wrapped domain, check whether its
+ * expression depends on the dimensions of the range of the wrapped domain.
+ *
+ * In particular, given a pw_aff living in
+ *
+ * [A -> B] -> c
+ *
+ * check whether c involves any dimension from B.
+ */
+static isl_bool pw_aff_is_arg_dependent(__isl_keep isl_pw_aff *pa) {
+	isl_space *space;
+	int arg_start;
+	int n_arg;
+
+	if (!pa)
+		return isl_bool_error;
+
+	space = isl_pw_aff_get_space(pa);
+	space = isl_space_domain(space);
+	space = isl_space_unwrap(space);
+	arg_start = isl_space_dim(space, isl_dim_in);
+	n_arg = isl_space_dim(space, isl_dim_out);
+	isl_space_free(space);
+
+	return isl_pw_aff_involves_dims(pa, isl_dim_in, arg_start, n_arg);
+}
+
+/* Check if expression "expr" is an indirect access.
+ * In particular, check whether its indices are defined over a wrapped domain.
+ */
+static isl_bool is_access_indirection(__isl_keep pet_expr *expr) {
+	isl_multi_pw_aff *index;
+	isl_space *space;
+	isl_bool b;
+
+	if (pet_expr_get_type(expr) != pet_expr_access)
+		return isl_bool_false;
+
+	index = pet_expr_access_get_index(expr);
+	space = isl_multi_pw_aff_get_space(index);
+	isl_multi_pw_aff_free(index);
+	space = isl_space_domain(space);
+	b = isl_space_is_wrapping(space);
+	isl_space_free(space);
+
+	return b;
+}
+
+/* Setup the indirection and indirect_access fields of the given GPU access
+ * descriptor "access".
+ *
+ * If "access" is indirect, expression "expr" has exactly one argument, this
+ * argument does not feature indirection itself, and only one index expression
+ * is indirected, then set "indirection" to the GPU access descriptor of the
+ * index expression and "indirect_index" to the index dimension where this
+ * indirection appears.  Otherwise set "indirection" to NULL.
+ *
+ * For example, this will accept the following cases:
+ *
+ * A[B[i]], A[i][B[j+i]][i],
+ *
+ * and will ignore the following cases:
+ *
+ * A[B[C[i]]], A[B[i]][B[i]].
+ */
+static void setup_indirection(__isl_keep pet_expr *expr,
+	struct ppcg_extract_access_data *data,
+	struct gpu_stmt_access *access,
+	__isl_keep isl_multi_pw_aff *index)
+{
+	isl_bool b, arg_indirection;
+	struct gpu_stmt_access *indirection;
+	isl_id *indirection_ref_id;
+	int n_arg, n_out, i, indirect_index;
+	pet_expr *arg;
+	isl_ctx *ctx = pet_expr_get_ctx(expr);
+
+	access->indirection = NULL;
+	access->indirect_index_expr = NULL;
+
+	b = is_access_indirection(expr);
+	if (b < 0 || !b)
+		return;
+
+	n_arg = pet_expr_get_n_arg(expr);
+	if (n_arg <= 0)
+		isl_die(ctx, isl_error_internal,
+			"expected expr arg for indirect access",
+			return);
+
+	if (n_arg > 1)
+		return;
+
+	arg = pet_expr_get_arg(expr, 0);
+	arg_indirection = is_access_indirection(arg);
+	if (arg_indirection < 0 || arg_indirection) {
+		pet_expr_free(arg);
+		return;
+	}
+
+	indirection_ref_id = pet_expr_access_get_ref_id(arg);
+	indirection = find_access(data->stmt->accesses,
+		indirection_ref_id);
+	pet_expr_free(arg);
+	isl_id_free(indirection_ref_id);
+
+	if (!indirection)
+		isl_die(ctx, isl_error_internal,
+			"could not find indirection access",
+			return);
+
+	indirect_index = -1;
+	n_out = isl_multi_pw_aff_dim(index, isl_dim_out);
+	for (i = 0; i < n_out; ++i) {
+		isl_bool r;
+		isl_pw_aff *pa = isl_multi_pw_aff_get_pw_aff(index, i);
+
+		r = pw_aff_is_arg_dependent(pa);
+		isl_pw_aff_free(pa);
+		if (r < 0)
+			return;
+
+		if (r) {
+			if (indirect_index == -1)
+				indirect_index = i;
+			else
+				return;
+		}
+	}
+	if (indirect_index == -1)
+		return;
+
+	access->indirection = indirection;
+	access->indirect_index = indirect_index;
+	access->indirect_index_expr =
+		isl_multi_pw_aff_get_pw_aff(index, indirect_index);
+}
+
 /* Extract a gpu_stmt_access from "expr", append it to the list
  * that ends in *data->next_access and update the end of the list.
  * If the access expression performs a write, then it is considered
@@ -5577,6 +5718,7 @@ static int extract_access(__isl_keep pet_expr *expr, void *user)
 	}
 	index = pet_expr_access_get_index(expr);
 	access->n_index = isl_multi_pw_aff_dim(index, isl_dim_out);
+	setup_indirection(expr, data, access, index);
 	isl_multi_pw_aff_free(index);
 	access->ref_id = pet_expr_access_get_ref_id(expr);
 	access->tagged_access = extract_single_tagged_access(tagged, expr);
@@ -5607,6 +5749,7 @@ static int pet_stmt_extract_accesses(struct gpu_stmt *stmt,
 	data.single_expression =
 		pet_tree_get_type(stmt->stmt->body) == pet_tree_expr;
 	data.any_to_outer = any_to_outer;
+	data.stmt = stmt;
 	return pet_tree_foreach_access_expr(stmt->stmt->body,
 						&extract_access, &data);
 }

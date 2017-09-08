@@ -37,6 +37,21 @@ struct gpu_stmt_access {
 	/* The reference id of the corresponding pet_expr. */
 	isl_id *ref_id;
 
+	/* For trivially indirect accesses, access of the index expression,
+         * NULL otherwise.
+	 * An access is trivially indirect if it has only one indirected
+	 * subscript of the shape
+	 *
+         * A[...][affine_expr(Index[j])][...]
+	 *
+	 * where affine_expr can involve other dimensions but not other
+	 * indirections. */
+	struct gpu_stmt_access *indirection;
+	/* Index of the indirect index expression. */
+	int indirect_index;
+	/* Indirect index expression. */
+	isl_pw_aff *indirect_index_expr;
+
 	struct gpu_stmt_access *next;
 };
 
