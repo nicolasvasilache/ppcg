@@ -379,7 +379,7 @@ static isl_stat compute_size_in_direction(__isl_take isl_constraint *c,
  * In particular, we currently only consider lower bounds on the output
  * dimension as candidate expressions.
  */
-static int compute_array_dim_size(struct gpu_array_bound *bound,
+int compute_array_dim_size(struct gpu_array_bound *bound,
 	__isl_take isl_basic_map *bounds)
 {
 	struct gpu_size_info size;
@@ -959,7 +959,7 @@ static int check_requires_unroll(struct gpu_group_data *data,
  * schedule dimensions.  When data->shared_depth is equal to
  * data->thread_depth, this result is already available in group->access.
  */
-static __isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
+__isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
 	__isl_keep isl_union_map *access, struct gpu_group_data *data)
 {
 	isl_union_map *shared;
