@@ -46,6 +46,7 @@ struct gpu_array_tile *gpu_array_tile_create(isl_ctx *ctx, int n_index)
 		tile->bound[i].lb = NULL;
 		tile->bound[i].stride = NULL;
 		tile->bound[i].shift = NULL;
+		tile->bound[i].indirection = NULL;
 	}
 
 	return tile;
