@@ -861,7 +861,7 @@ static __isl_give isl_set *array_extent(struct gpu_array_info *array)
  * shared/private memory tile back to the access relation.
  * Constraints (2) are obtained from the (recomputed) extent.
  */
-static __isl_give isl_map *group_tile(struct gpu_array_ref_group *group)
+__isl_give isl_map *group_tile(struct gpu_array_ref_group *group)
 {
 	int i;
 	int n_index = group->array->n_index;
@@ -3222,9 +3222,9 @@ __isl_give isl_schedule_node *add_sync(struct ppcg_kernel *kernel,
  *
  * with D the outer schedule dimensions at "node".
  */
-static __isl_give isl_union_map *anchored_non_local_accesses(
+__isl_give isl_union_map *anchored_non_local_accesses(
 	struct ppcg_kernel *kernel, struct gpu_array_ref_group *group,
-	__isl_take isl_schedule_node *node, int read)
+	__isl_keep isl_schedule_node *node, int read)
 {
 	isl_union_map *access;
 	isl_union_map *prefix;
@@ -3284,7 +3284,7 @@ static __isl_give isl_multi_aff *create_from_access(isl_ctx *ctx,
  * the next copy into shared memory because each element of
  * the shared memory tile is always copied by the same thread.
  */
-static __isl_give isl_schedule_node *add_group_write_sync(
+__isl_give isl_schedule_node *add_group_write_sync(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel,
 	struct gpu_array_ref_group *group, int shared)
 {
@@ -3357,7 +3357,7 @@ static __isl_give isl_schedule_node *add_group_write_sync(
  * in the schedule tree depending on where the corresponding reads
  * from global memory are performed.
  */
-static __isl_give isl_schedule_node *add_copies_group_private(
+__isl_give isl_schedule_node *add_copies_group_private(
 	struct ppcg_kernel *kernel, struct gpu_array_ref_group *group,
 	__isl_take isl_schedule_node *node, int read)
 {
