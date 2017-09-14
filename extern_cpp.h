@@ -6,6 +6,7 @@ extern "C" {
 #include "ppcg/cuda.h"
 #include "ppcg/cuda_common.h"
 #include "ppcg/gpu.h"
+#include "ppcg/gpu_array_tile.h"
 #include "ppcg/gpu_group.h"
 #include "ppcg/gpu_print.h"
 #include "ppcg/gpu_tree.h"
@@ -353,5 +354,52 @@ int join_all_groups(int n, struct gpu_array_ref_group **groups);
 int smaller_tile(struct gpu_array_tile *tile,
   struct gpu_array_tile *tile1, struct gpu_array_tile *tile2);
 
+/* Return a read ("read" is 1) or write access relation for "group"
+ * with those accesses removed that are only needed to communicate data
+ * within the subtree of the schedule rooted at "node".
+ * Furthermore, include the prefix schedule at "node".
+ * That is, return a relation of the form
+ *
+ *	S -> [D -> A]
+ *
+ * with D the outer schedule dimensions at "node".
+ */
+__isl_give isl_union_map *anchored_non_local_accesses(
+	struct ppcg_kernel *kernel, struct gpu_array_ref_group *group,
+	__isl_take isl_schedule_node *node, int read);
+
+/* Return the effective gpu_array_tile associated to "group" or
+ * NULL if there is no such gpu_array_tile.
+ */
+struct gpu_array_tile *gpu_array_ref_group_tile(
+	struct gpu_array_ref_group *group);
+
+__isl_give isl_schedule_node *add_copies_group_private(
+	struct ppcg_kernel *kernel, struct gpu_array_ref_group *group,
+	__isl_take isl_schedule_node *node, int read);
+
+int gpu_array_is_scalar(struct gpu_array_info *array);
+__isl_give isl_map *group_tile(struct gpu_array_ref_group *group);
+
+/* Mark all dimensions in the band node "node" to be of "type".
+ */
+__isl_give isl_schedule_node *ppcg_set_schedule_node_type(
+	__isl_take isl_schedule_node *node, enum isl_ast_loop_type type);
+
+/* If any writes in "group" require synchronization, then make sure
+ * that there is a synchronization node for "kernel" after the node
+ * following "node" in a sequence.
+ *
+ * If "shared" is set and no synchronization is needed for
+ * the writes to global memory, then add synchronization before
+ * the kernel to protect shared memory from being overwritten
+ * by the next iteration of the core computation.
+ * No additional synchronization is needed to protect against
+ * the next copy into shared memory because each element of
+ * the shared memory tile is always copied by the same thread.
+ */
+__isl_give isl_schedule_node *add_group_write_sync(
+	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel,
+	struct gpu_array_ref_group *group, int shared);
 
 }
