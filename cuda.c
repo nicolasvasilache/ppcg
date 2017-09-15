@@ -506,6 +506,9 @@ static __isl_give isl_printer *print_kernel_stmt(__isl_take isl_printer *p,
 	isl_id_free(id);
 
 	isl_ast_print_options_free(print_options);
+	
+	if (!stmt)
+		return p;
 
 	switch (stmt->type) {
 	case ppcg_kernel_copy:
