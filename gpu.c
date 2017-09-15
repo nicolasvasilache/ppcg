@@ -1570,9 +1570,27 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 		return isl_multi_pw_aff_range_product(index, field);
 	}
 
+	isl_space *tiling_space = isl_multi_pw_aff_get_space(tiling);
+	tiling_space = isl_space_domain(tiling_space);
+	tiling_space = isl_space_unwrap(tiling_space);
+	tiling_space = isl_space_domain(tiling_space);
+	isl_bool b = isl_space_is_wrapping(tiling_space);
+	if (b < 0) {
+		isl_space_free(tiling_space);
+		goto error;
+	}
+
 	space = isl_space_domain(isl_multi_pw_aff_get_space(index));
 	space = isl_space_map_from_set(space);
 	mpa = isl_multi_pw_aff_identity(space);
+	if (b) {
+		tiling_space = isl_space_unwrap(tiling_space);
+		isl_multi_pw_aff *mpa2 = isl_multi_pw_aff_zero(tiling_space);
+		mpa = isl_multi_pw_aff_range_product(mpa, mpa2);
+	} else {
+		isl_space_free(tiling_space);
+	}
+
 	index = isl_multi_pw_aff_range_product(mpa, index);
 	index = isl_multi_pw_aff_pullback_multi_pw_aff(tiling, index);
 
@@ -1675,18 +1693,37 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	if (!tile)
 		return index;
 
-	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));
-	space = isl_space_range(isl_space_unwrap(space));
-	space = isl_space_map_from_set(space);
-	pma = isl_pw_multi_aff_identity(space);
-	sched2depth = isl_pw_multi_aff_copy(data->sched2copy);
+	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));  // [D->A]                 [[D->I]->A]
+
+	isl_space *indirection_space;
+	indirection_space = isl_space_domain(isl_space_unwrap(isl_space_copy(space)));
+	isl_bool b = isl_space_is_wrapping(indirection_space);
+	if (b < 0) {
+		isl_space_free(space);
+		isl_space_free(indirection_space);
+		return isl_multi_pw_aff_free(index);
+	}
+	indirection_space = b ? isl_space_range(isl_space_unwrap(indirection_space)) : isl_space_free(indirection_space);
+
+	space = isl_space_range(isl_space_unwrap(space));                 // A                      A
+	space = isl_space_map_from_set(space);				  // A->A                   A->A
+	pma = isl_pw_multi_aff_identity(space);				  // A...->(A)...           A->(A)
+	sched2depth = isl_pw_multi_aff_copy(data->sched2copy);		  // in D->L                D?->L?    [D->I]->[L->I]  /* product with I->I
 	dim = isl_pw_multi_aff_dim(sched2depth, isl_dim_out);
 	sched2depth = isl_pw_multi_aff_drop_dims(sched2depth, isl_dim_out,
 					    tile->depth, dim - tile->depth);
-	pma = isl_pw_multi_aff_product(sched2depth, pma);
+
+	if (b) {
+		indirection_space = isl_space_map_from_set(indirection_space);
+		isl_pw_multi_aff *indirection_pma = isl_pw_multi_aff_identity(indirection_space);
+		sched2depth = isl_pw_multi_aff_product(sched2depth, indirection_pma);
+	}
+
+	pma = isl_pw_multi_aff_product(sched2depth, pma);                 // [D...->A...]->[(L)...->(A)...]   need [D->A]->[[L->I]->A]
+									  // but with dropped dims in L
 	tiling = isl_multi_pw_aff_from_multi_aff(
-				    isl_multi_aff_copy(tile->tiling));
-	tiling = isl_multi_pw_aff_pullback_pw_multi_aff(tiling, pma);
+				    isl_multi_aff_copy(tile->tiling));    // [D->A]->(T)
+	tiling = isl_multi_pw_aff_pullback_pw_multi_aff(tiling, pma);     // ?? [L->A]->(T)
 
 	index = tile_outer(index, tiling);
 
@@ -2134,6 +2171,12 @@ static __isl_give isl_ast_node *at_domain(__isl_take isl_ast_node *node,
 		return isl_ast_node_free(node);
 	if (!strcmp(name, "read") || !strcmp(name, "write")) {
 		struct gpu_array_ref_group *group = p;
+
+		if (group->shared_tile &&
+			group->n_ref == 1 && group->refs[0]->indirection) {
+			return node;
+		}
+
 		return create_access_leaf(data->kernel, group, node, build);
 	}
 	if (!is_sync)
