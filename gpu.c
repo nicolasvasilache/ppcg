@@ -2416,12 +2416,6 @@ static __isl_give isl_ast_node *at_domain(__isl_take isl_ast_node *node,
 		return isl_ast_node_free(node);
 	if (!strcmp(name, "read") || !strcmp(name, "write")) {
 		struct gpu_array_ref_group *group = p;
-
-		if (group->shared_tile &&
-			group->n_ref == 1 && group->refs[0]->indirection) {
-			return node;
-		}
-
 		return create_access_leaf(data->kernel, group, node, build);
 	}
 	if (!is_sync)
