@@ -1551,7 +1551,8 @@ static struct gpu_array_ref_group *find_ref_group(
  *	L -> T
  */
 static __isl_give isl_multi_pw_aff *tile_outer(
-	__isl_take isl_multi_pw_aff *index, __isl_take isl_multi_pw_aff *tiling)
+	__isl_take isl_multi_pw_aff *index, __isl_take isl_multi_pw_aff *tiling,
+	__isl_take isl_multi_pw_aff *suborig, __isl_take isl_multi_pw_aff *subshared)
 {
 	isl_bool is_wrapping;
 	isl_space *space;
@@ -1566,7 +1567,7 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 		field = isl_multi_pw_aff_copy(index);
 		field = isl_multi_pw_aff_range_factor_range(field);
 		index = isl_multi_pw_aff_range_factor_domain(index);
-		index = tile_outer(index, tiling);
+		index = tile_outer(index, tiling, NULL, NULL);
 		return isl_multi_pw_aff_range_product(index, field);
 	}
 
@@ -1581,13 +1582,38 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 	}
 
 	space = isl_space_domain(isl_multi_pw_aff_get_space(index));
+	isl_space *dom = isl_space_copy(space);
+	dom = isl_space_align_params(dom, isl_space_copy(tiling_space));
 	space = isl_space_map_from_set(space);
 	mpa = isl_multi_pw_aff_identity(space);
 	if (b) {
-		tiling_space = isl_space_unwrap(tiling_space);
-		isl_multi_pw_aff *mpa2 = isl_multi_pw_aff_zero(tiling_space);
+#if 0
+		isl_space *s;
+		isl_multi_pw_aff *mpa2;
+
+		s = isl_space_copy(tiling_space);
+		s = isl_space_unwrap(s);
+		s = isl_space_domain(s);
+		s = isl_space_unwrap(s);
+		s = isl_space_range(s);
+		s = isl_space_align_params(s, isl_space_copy(dom));
+		s = isl_space_map_from_domain_and_range(isl_space_copy(dom), s);
+		mpa2 = isl_multi_pw_aff_zero(s);
 		mpa = isl_multi_pw_aff_range_product(mpa, mpa2);
+
+		s = tiling_space;
+		s = isl_space_unwrap(s);
+		s = isl_space_range(s);
+		s = isl_space_align_params(s, isl_space_copy(dom));
+		s = isl_space_map_from_domain_and_range(dom, s);
+		mpa2 = isl_multi_pw_aff_zero(s);
+		mpa = isl_multi_pw_aff_range_product(mpa, mpa2);
+#endif
+		mpa = isl_multi_pw_aff_range_product(mpa, suborig);
+		mpa = isl_multi_pw_aff_range_product(mpa, subshared);
+		fprintf(stderr, "mpa: "); isl_multi_pw_aff_dump(mpa);
 	} else {
+		isl_space_free(dom);
 		isl_space_free(tiling_space);
 	}
 
@@ -1642,18 +1668,191 @@ error:
  * That is, an index expression of the form  L -> F(A) will be transformed
  * into an index expression of the form L -> F(T).
  */
+
+static __isl_give isl_multi_pw_aff *transform_index(
+	__isl_take isl_multi_pw_aff *index, __isl_keep isl_id *ref_id,
+	void *user);
+
+static __isl_give isl_multi_pw_aff *localize_tiling(
+	struct gpu_array_ref_group *group,
+	struct gpu_array_tile *tile,
+	struct ppcg_transform_data *data,
+	isl_pw_multi_aff **s2d)
+{
+	int dim;
+	isl_space *space;
+	isl_multi_pw_aff *tiling;
+	isl_pw_multi_aff *pma;
+	isl_pw_multi_aff *sched2depth;
+
+	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));
+
+	isl_space *indirection_space;
+	indirection_space = isl_space_domain(isl_space_unwrap(isl_space_copy(space)));
+	isl_bool b = isl_space_is_wrapping(indirection_space);
+	if (b < 0) {
+		isl_space_free(space);
+		isl_space_free(indirection_space);
+		return NULL;
+	} else if (!b) {
+		isl_space_free(indirection_space);
+	} else {
+		indirection_space = isl_space_unwrap(indirection_space);
+		indirection_space = isl_space_curry(indirection_space);
+		indirection_space = isl_space_range(indirection_space);
+	}
+
+	space = isl_space_range(isl_space_unwrap(space));
+	space = isl_space_map_from_set(space);
+	pma = isl_pw_multi_aff_identity(space);
+	sched2depth = isl_pw_multi_aff_copy(data->sched2copy);
+	dim = isl_pw_multi_aff_dim(sched2depth, isl_dim_out);
+	sched2depth = isl_pw_multi_aff_drop_dims(sched2depth, isl_dim_out,
+					    tile->depth, dim - tile->depth);
+
+	// tiling is in [[[D->I]->TI]->A]->TA
+	//
+	// need pma in space [[[L->I]->TI]->A]->[[[D->I]->TI]->A]
+	// start with sched2depth = in L->D (?) assuming some weirdness
+	// [L->I] -> [D->I]  // product with I->I identity
+	// [[L->I]->TI] -> [[D->I]->TI] // product with TI->TI identity
+	// [[[L->I]->TI]->A] -> [[[D->I]->TI]->A] // product with A->A identity
+	//
+	//
+	//
+	// have [L->TI] from indirection  and [L->D] from sched
+	// need [[[L->I]->TI]->A]->[[[D->I]->TI]->A]
+	// [L->I] -> [D->I]  // sched * I->I identity  (=x)
+	// [L->I] -> [TI->I] // indir * I->I identity
+	// [L->I] -> TI      // % factor domain  (=y)
+	// [L->I] -> [[D->I]->TI] // x *range y
+	// TODO: get [[L->I]->TI] on the left
+	// [[L->I]->TI] -> [L->I] // project_domain_map (=z)
+	// [[L->I]->TI] -> [[D->I]->TI] // y pullback z
+	//
+	// ?
+	// [[L->I]->TI'] -> [TI->TI'] // y * TI'->TI' identity (not sure TI=TI')
+	// [[L->I]->TI'] -> TI // % factor domain
+	
+	if (b) {
+		struct gpu_stmt_access *index_access =
+			group->refs[0]->indirection;
+
+		// indirection index will be  L->TI  from D->TI
+		isl_pw_multi_aff *apma = isl_pw_multi_aff_from_map(
+			isl_map_copy(index_access->access));
+		isl_multi_pw_aff *ampa = isl_multi_pw_aff_from_pw_multi_aff(
+			apma);
+		ampa = transform_index(ampa, index_access->ref_id, data);
+		isl_space *sp1 = isl_multi_pw_aff_get_space(ampa);
+		apma = isl_pw_multi_aff_from_multi_pw_aff(ampa);
+
+		isl_space *s;
+		isl_pw_multi_aff *ipma;
+
+		s = isl_space_copy(indirection_space);
+		s = isl_space_unwrap(s);
+		s = isl_space_domain(s);
+		s = isl_space_map_from_set(s);
+
+		ipma = isl_pw_multi_aff_identity(s);
+		sched2depth = isl_pw_multi_aff_product(sched2depth, ipma);
+
+		s = indirection_space;
+		s = isl_space_unwrap(s);
+		s = isl_space_range(s);
+		s = isl_space_map_from_set(s);
+
+		ipma = isl_pw_multi_aff_identity(s);
+		sched2depth = isl_pw_multi_aff_product(sched2depth, ipma);
+
+#if 0
+		sched2depth = isl_pw_multi_aff_product(sched2depth,
+			isl_pw_multi_aff_copy(ipma));
+		apma = isl_pw_multi_aff_product(apma, ipma);
+		ampa = isl_multi_pw_aff_from_pw_multi_aff(apma);
+		ampa = isl_multi_pw_aff_range_factor_domain(ampa);
+		apma = isl_pw_multi_aff_from_multi_pw_aff(ampa);
+		isl_pw_multi_aff_dump(apma);
+		sched2depth = isl_pw_multi_aff_range_product(sched2depth,
+			apma);	
+
+		isl_space *sp2 = isl_pw_multi_aff_get_space(sched2depth);
+		sp1 = isl_space_range(sp1);
+		sp2 = isl_space_domain(sp2);
+		sp1 = isl_space_align_params(sp1, isl_space_copy(sp2));
+		sp2 = isl_space_align_params(sp2, isl_space_copy(sp1));
+		sp2 = isl_space_map_from_domain_and_range(sp2, sp1);
+		isl_space_dump(sp2);
+		isl_multi_aff *mapb = isl_multi_aff_domain_map(sp2);
+		sched2depth = isl_pw_multi_aff_pullback_multi_aff(sched2depth,
+			mapb);
+#endif
+
+	//	sched2depth = isl_pw_multi_aff_product(sched2depth, apma);
+
+	}
+
+	if (s2d)
+		*s2d = isl_pw_multi_aff_copy(sched2depth);
+
+	pma = isl_pw_multi_aff_product(sched2depth, pma);
+	tiling = isl_multi_pw_aff_from_multi_aff(
+				    isl_multi_aff_copy(tile->tiling));
+
+	tiling = isl_multi_pw_aff_pullback_pw_multi_aff(tiling, pma);
+
+	return tiling;
+}
+
+static struct gpu_array_ref_group *ref_group_by_id(__isl_keep isl_id *ref_id,
+	struct ppcg_transform_data *data)
+{
+	struct gpu_array_ref_group *group;
+	struct gpu_stmt_access *access;
+	const char *name;
+	int i;
+
+	if (!data->kernel)
+		return NULL;
+
+	access = find_access(data->accesses, ref_id);
+	if (!access)
+		return NULL;
+	if (!isl_map_has_tuple_name(access->access, isl_dim_out))
+		return NULL;
+
+	name = get_outer_array_name(access->access);
+	i = find_array_index(data->kernel, name);
+	if (i < 0)
+		isl_die(isl_id_get_ctx(ref_id), isl_error_internal,
+			"cannot find array",
+			goto error);
+	data->local_array = &data->kernel->array[i];
+	data->array = data->local_array->array;
+
+	group = find_ref_group(data->local_array, access);
+	if (!group) {
+		data->global = 1;
+		return NULL;
+	}
+	return group;
+
+error:
+	group = isl_calloc_type(isl_id_get_ctx(ref_id), struct gpu_array_ref_group);
+	group->n_ref = -1;
+	return group;
+}
+
 static __isl_give isl_multi_pw_aff *transform_index(
 	__isl_take isl_multi_pw_aff *index, __isl_keep isl_id *ref_id,
 	void *user)
 {
 	struct ppcg_transform_data *data = user;
-	struct gpu_stmt_access *access;
 	struct gpu_array_ref_group *group;
 	struct gpu_array_tile *tile;
 	isl_pw_multi_aff *iterator_map;
-	int i;
 	int dim;
-	const char *name;
 	isl_space *space;
 	isl_multi_pw_aff *tiling;
 	isl_pw_multi_aff *pma;
@@ -1664,28 +1863,12 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	iterator_map = isl_pw_multi_aff_copy(data->iterator_map);
 	index = isl_multi_pw_aff_pullback_pw_multi_aff(index, iterator_map);
 
-	if (!data->kernel)
+	group = ref_group_by_id(ref_id, data);
+	if (!group)
 		return index;
-
-	access = find_access(data->accesses, ref_id);
-	if (!access)
-		return index;
-	if (!isl_map_has_tuple_name(access->access, isl_dim_out))
-		return index;
-
-	name = get_outer_array_name(access->access);
-	i = find_array_index(data->kernel, name);
-	if (i < 0)
-		isl_die(isl_multi_pw_aff_get_ctx(index), isl_error_internal,
-			"cannot find array",
-			return isl_multi_pw_aff_free(index));
-	data->local_array = &data->kernel->array[i];
-	data->array = data->local_array->array;
-
-	group = find_ref_group(data->local_array, access);
-	if (!group) {
-		data->global = 1;
-		return index;
+	if (group && group->n_ref == -1) {
+		free(group);
+		return isl_multi_pw_aff_free(index);
 	}
 
 	tile = gpu_array_ref_group_tile(group);
@@ -1693,39 +1876,101 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	if (!tile)
 		return index;
 
-	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));  // [D->A]                 [[D->I]->A]
-
-	isl_space *indirection_space;
-	indirection_space = isl_space_domain(isl_space_unwrap(isl_space_copy(space)));
-	isl_bool b = isl_space_is_wrapping(indirection_space);
-	if (b < 0) {
-		isl_space_free(space);
-		isl_space_free(indirection_space);
+	tiling = localize_tiling(group, tile, data, NULL);
+	if (!tiling)
 		return isl_multi_pw_aff_free(index);
+
+	isl_multi_pw_aff *subtiling = NULL;
+	if (group->n_ref == 1 && group->refs[0]->indirection) {
+		struct gpu_stmt_access *ind_access =
+			group->refs[0]->indirection;
+		struct gpu_array_ref_group *ind_group;
+		struct gpu_array_tile *ind_tile;
+		isl_multi_pw_aff *ind_tiling;
+		struct ppcg_transform_data ind_data = {0};
+
+		ind_data.kernel = data->kernel;
+		ind_data.accesses = data->accesses;
+		ind_data.iterator_map = data->iterator_map;
+		ind_data.sched2copy = data->sched2copy;
+
+		ind_group = ref_group_by_id(ind_access->ref_id, &ind_data);
+		isl_assert(isl_multi_pw_aff_get_ctx(index), ind_group,
+			return isl_multi_pw_aff_free(index));
+
+		ind_tile = gpu_array_ref_group_tile(ind_group);
+		isl_assert(isl_multi_pw_aff_get_ctx(index), ind_tile,
+			return isl_multi_pw_aff_free(index));
+
+		isl_pw_multi_aff *ind_sched2depth;
+
+		ind_tiling = localize_tiling(ind_group, ind_tile, &ind_data, &ind_sched2depth);
+		fprintf(stderr, "ind_tiling: "); isl_multi_pw_aff_dump(ind_tiling);
+		subtiling = isl_multi_pw_aff_copy(ind_tiling);
+
+
+///////////////////////////////////
+
+		struct gpu_stmt_access *index_access =
+			group->refs[0]->indirection;
+
+		// indirection index will be  L->TI  from D->TI
+		isl_pw_multi_aff *apma = isl_pw_multi_aff_from_map(
+			isl_map_copy(index_access->access));
+		isl_multi_pw_aff *ampa = isl_multi_pw_aff_from_pw_multi_aff(
+			apma);
+
+		isl_multi_pw_aff *ampa2 = isl_multi_pw_aff_copy(ampa);
+		iterator_map = isl_pw_multi_aff_copy(data->iterator_map);
+		ampa2 = isl_multi_pw_aff_pullback_pw_multi_aff(ampa2, iterator_map);
+
+		ampa = transform_index(ampa, index_access->ref_id, data);
+
+		index = tile_outer(index, tiling, ampa2, ampa);
+
+///////////////////////////////////
+
+#if 0
+		isl_space *ind_space = isl_multi_pw_aff_get_space(ind_tiling);
+		//ind_space = isl_space_wrap(ind_space);
+
+		isl_multi_aff *ind_ma;
+		ind_ma = isl_multi_aff_domain_map(ind_space);
+
+		ind_tiling = isl_multi_pw_aff_pullback_multi_aff(ind_tiling,
+			isl_multi_aff_copy(ind_ma));
+
+		isl_multi_pw_aff *ind_mpa;
+		ind_mpa = isl_multi_pw_aff_from_multi_aff(ind_ma);
+		ind_tiling = isl_multi_pw_aff_range_product(ind_mpa, ind_tiling);
+
+		isl_space *space = isl_multi_pw_aff_get_space(tiling);
+		space = isl_space_domain(space);
+		space = isl_space_unwrap(space);
+		space = isl_space_range(space);
+		space = isl_space_map_from_set(space);
+		isl_multi_aff *array_ma;
+		array_ma = isl_multi_aff_identity(space);
+		isl_multi_pw_aff *array_mpa;
+		array_mpa = isl_multi_pw_aff_from_multi_aff(array_ma);
+		ind_tiling = isl_multi_pw_aff_product(ind_tiling, array_mpa);
+
+		fprintf(stderr, "\n\n");
+		fprintf(stderr, "tiilng: "); isl_multi_pw_aff_dump(tiling);
+		//tiling = isl_multi_pw_aff_pullback_multi_pw_aff(tiling, ind_tiling);
+
+#endif
+		//fprintf(stderr, "\n\n");
+		//isl_multi_pw_aff_dump(ind_tiling);
+		//isl_multi_pw_aff_dump(tiling);
+	} else {
+		index = tile_outer(index, tiling, NULL, NULL);
 	}
-	indirection_space = b ? isl_space_range(isl_space_unwrap(indirection_space)) : isl_space_free(indirection_space);
-
-	space = isl_space_range(isl_space_unwrap(space));                 // A                      A
-	space = isl_space_map_from_set(space);				  // A->A                   A->A
-	pma = isl_pw_multi_aff_identity(space);				  // A...->(A)...           A->(A)
-	sched2depth = isl_pw_multi_aff_copy(data->sched2copy);		  // in D->L                D?->L?    [D->I]->[L->I]  /* product with I->I
-	dim = isl_pw_multi_aff_dim(sched2depth, isl_dim_out);
-	sched2depth = isl_pw_multi_aff_drop_dims(sched2depth, isl_dim_out,
-					    tile->depth, dim - tile->depth);
-
-	if (b) {
-		indirection_space = isl_space_map_from_set(indirection_space);
-		isl_pw_multi_aff *indirection_pma = isl_pw_multi_aff_identity(indirection_space);
-		sched2depth = isl_pw_multi_aff_product(sched2depth, indirection_pma);
+	if (group->n_ref == 1 && group->refs[0]->indirection) {
+		fprintf(stderr, "\n\n");
+		isl_multi_pw_aff_dump(index);
 	}
-
-	pma = isl_pw_multi_aff_product(sched2depth, pma);                 // [D...->A...]->[(L)...->(A)...]   need [D->A]->[[L->I]->A]
-									  // but with dropped dims in L
-	tiling = isl_multi_pw_aff_from_multi_aff(
-				    isl_multi_aff_copy(tile->tiling));    // [D->A]->(T)
-	tiling = isl_multi_pw_aff_pullback_pw_multi_aff(tiling, pma);     // ?? [L->A]->(T)
-
-	index = tile_outer(index, tiling);
+	fprintf(stderr, "\n");
 
 	return index;
 }
