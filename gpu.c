@@ -1573,27 +1573,12 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 		return isl_multi_pw_aff_range_product(index, field);
 	}
 
-	isl_space *tiling_space = isl_multi_pw_aff_get_space(tiling);
-	tiling_space = isl_space_domain(tiling_space);
-	tiling_space = isl_space_unwrap(tiling_space);
-	tiling_space = isl_space_domain(tiling_space);
-	isl_bool b = isl_space_is_wrapping(tiling_space);
-	if (b < 0) {
-		isl_space_free(tiling_space);
-		goto error;
-	}
-
 	space = isl_space_domain(isl_multi_pw_aff_get_space(index));
-	isl_space *dom = isl_space_copy(space);
-	dom = isl_space_align_params(dom, isl_space_copy(tiling_space));
 	space = isl_space_map_from_set(space);
 	mpa = isl_multi_pw_aff_identity(space);
-	if (b) {
+	if (suborig && subshared) {
 		mpa = isl_multi_pw_aff_range_product(mpa, suborig);
 		mpa = isl_multi_pw_aff_range_product(mpa, subshared);
-	} else {
-		isl_space_free(dom);
-		isl_space_free(tiling_space);
 	}
 
 	index = isl_multi_pw_aff_range_product(mpa, index);
