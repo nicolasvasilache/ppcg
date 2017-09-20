@@ -1567,7 +1567,9 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 		field = isl_multi_pw_aff_copy(index);
 		field = isl_multi_pw_aff_range_factor_range(field);
 		index = isl_multi_pw_aff_range_factor_domain(index);
-		index = tile_outer(index, tiling, NULL, NULL);
+		suborig = isl_multi_pw_aff_range_factor_domain(suborig);
+		subshared = isl_multi_pw_aff_range_factor_domain(subshared);
+		index = tile_outer(index, tiling, suborig, subshared);
 		return isl_multi_pw_aff_range_product(index, field);
 	}
 
