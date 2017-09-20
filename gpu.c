@@ -1646,15 +1646,10 @@ error:
  * into an index expression of the form L -> F(T).
  */
 
-static __isl_give isl_multi_pw_aff *transform_index(
-	__isl_take isl_multi_pw_aff *index, __isl_keep isl_id *ref_id,
-	void *user);
-
 static __isl_give isl_multi_pw_aff *localize_tiling(
 	struct gpu_array_ref_group *group,
 	struct gpu_array_tile *tile,
-	struct ppcg_transform_data *data,
-	isl_pw_multi_aff **s2d)
+	struct ppcg_transform_data *data)
 {
 	int dim;
 	isl_space *space;
@@ -1711,18 +1706,6 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 	// [[L->I]->TI'] -> TI // % factor domain
 	
 	if (b) {
-		struct gpu_stmt_access *index_access =
-			group->refs[0]->indirection;
-
-		// indirection index will be  L->TI  from D->TI
-		isl_pw_multi_aff *apma = isl_pw_multi_aff_from_map(
-			isl_map_copy(index_access->access));
-		isl_multi_pw_aff *ampa = isl_multi_pw_aff_from_pw_multi_aff(
-			apma);
-		ampa = transform_index(ampa, index_access->ref_id, data);
-		isl_space *sp1 = isl_multi_pw_aff_get_space(ampa);
-		apma = isl_pw_multi_aff_from_multi_pw_aff(ampa);
-
 		isl_space *s;
 		isl_pw_multi_aff *ipma;
 
@@ -1742,9 +1725,6 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 		ipma = isl_pw_multi_aff_identity(s);
 		sched2depth = isl_pw_multi_aff_product(sched2depth, ipma);
 	}
-
-	if (s2d)
-		*s2d = isl_pw_multi_aff_copy(sched2depth);
 
 	pma = isl_pw_multi_aff_product(sched2depth, pma);
 	tiling = isl_multi_pw_aff_from_multi_aff(
@@ -1826,40 +1806,11 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	if (!tile)
 		return index;
 
-	tiling = localize_tiling(group, tile, data, NULL);
+	tiling = localize_tiling(group, tile, data);
 	if (!tiling)
 		return isl_multi_pw_aff_free(index);
 
-	isl_multi_pw_aff *subtiling = NULL;
 	if (group->n_ref == 1 && group->refs[0]->indirection) {
-		struct gpu_stmt_access *ind_access =
-			group->refs[0]->indirection;
-		struct gpu_array_ref_group *ind_group;
-		struct gpu_array_tile *ind_tile;
-		isl_multi_pw_aff *ind_tiling;
-		struct ppcg_transform_data ind_data = {0};
-
-		ind_data.kernel = data->kernel;
-		ind_data.accesses = data->accesses;
-		ind_data.iterator_map = data->iterator_map;
-		ind_data.sched2copy = data->sched2copy;
-
-		ind_group = ref_group_by_id(ind_access->ref_id, &ind_data);
-		isl_assert(isl_multi_pw_aff_get_ctx(index), ind_group,
-			return isl_multi_pw_aff_free(index));
-
-		ind_tile = gpu_array_ref_group_tile(ind_group);
-		isl_assert(isl_multi_pw_aff_get_ctx(index), ind_tile,
-			return isl_multi_pw_aff_free(index));
-
-		isl_pw_multi_aff *ind_sched2depth;
-
-		ind_tiling = localize_tiling(ind_group, ind_tile, &ind_data, &ind_sched2depth);
-		subtiling = isl_multi_pw_aff_copy(ind_tiling);
-
-
-///////////////////////////////////
-
 		struct gpu_stmt_access *index_access =
 			group->refs[0]->indirection;
 
@@ -1876,9 +1827,6 @@ static __isl_give isl_multi_pw_aff *transform_index(
 		ampa = transform_index(ampa, index_access->ref_id, data);
 
 		index = tile_outer(index, tiling, ampa2, ampa);
-
-///////////////////////////////////
-
 	} else {
 		index = tile_outer(index, tiling, NULL, NULL);
 	}
@@ -2209,19 +2157,6 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 	expr = isl_ast_build_access_from_pw_multi_aff(build, pma2);
 
 	// FIXME: how about the affine expression around the indirection?
-	
-	// TODO: replace the indirect subscript with a parameter,
-	// drop all copy schedule dims that are no longer involved
-	// in the access expression (this were meant to iterate over the
-	// subscript that is indirected): if they do not appear in the
-	// access relation, this means they will get scheduled as loops that
-	// repeatedly do the same operation.
-	//
-	// Would removing a dimension here help with removing a loop scheduled
-	// around this?  Probably not...  Do the parameter replacement eariler?
-	// Have a specially-named parameter equal to a constant instead of the
-	// indirect subscript (part)?
-
 	if (indAccess) {
 		struct gpu_array_ref_group *indGroup =
 			find_group_by_id(kernel,
@@ -2247,7 +2182,6 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 		isl_map *im = isl_map_from_pw_multi_aff(indPma2);
 		im = isl_map_apply_range(im, m);
 		indPma2 = isl_pw_multi_aff_from_map(im);
-		isl_pw_multi_aff_dump(indPma2);
 
 		isl_ast_expr *indExpr =
 			isl_ast_build_access_from_pw_multi_aff(build, indPma2);
