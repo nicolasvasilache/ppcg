@@ -1587,28 +1587,6 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 	space = isl_space_map_from_set(space);
 	mpa = isl_multi_pw_aff_identity(space);
 	if (b) {
-#if 0
-		isl_space *s;
-		isl_multi_pw_aff *mpa2;
-
-		s = isl_space_copy(tiling_space);
-		s = isl_space_unwrap(s);
-		s = isl_space_domain(s);
-		s = isl_space_unwrap(s);
-		s = isl_space_range(s);
-		s = isl_space_align_params(s, isl_space_copy(dom));
-		s = isl_space_map_from_domain_and_range(isl_space_copy(dom), s);
-		mpa2 = isl_multi_pw_aff_zero(s);
-		mpa = isl_multi_pw_aff_range_product(mpa, mpa2);
-
-		s = tiling_space;
-		s = isl_space_unwrap(s);
-		s = isl_space_range(s);
-		s = isl_space_align_params(s, isl_space_copy(dom));
-		s = isl_space_map_from_domain_and_range(dom, s);
-		mpa2 = isl_multi_pw_aff_zero(s);
-		mpa = isl_multi_pw_aff_range_product(mpa, mpa2);
-#endif
 		mpa = isl_multi_pw_aff_range_product(mpa, suborig);
 		mpa = isl_multi_pw_aff_range_product(mpa, subshared);
 	} else {
@@ -1725,7 +1703,6 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 	// [L->I] -> [TI->I] // indir * I->I identity
 	// [L->I] -> TI      // % factor domain  (=y)
 	// [L->I] -> [[D->I]->TI] // x *range y
-	// TODO: get [[L->I]->TI] on the left
 	// [[L->I]->TI] -> [L->I] // project_domain_map (=z)
 	// [[L->I]->TI] -> [[D->I]->TI] // y pullback z
 	//
@@ -1764,32 +1741,6 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 
 		ipma = isl_pw_multi_aff_identity(s);
 		sched2depth = isl_pw_multi_aff_product(sched2depth, ipma);
-
-#if 0
-		sched2depth = isl_pw_multi_aff_product(sched2depth,
-			isl_pw_multi_aff_copy(ipma));
-		apma = isl_pw_multi_aff_product(apma, ipma);
-		ampa = isl_multi_pw_aff_from_pw_multi_aff(apma);
-		ampa = isl_multi_pw_aff_range_factor_domain(ampa);
-		apma = isl_pw_multi_aff_from_multi_pw_aff(ampa);
-		isl_pw_multi_aff_dump(apma);
-		sched2depth = isl_pw_multi_aff_range_product(sched2depth,
-			apma);	
-
-		isl_space *sp2 = isl_pw_multi_aff_get_space(sched2depth);
-		sp1 = isl_space_range(sp1);
-		sp2 = isl_space_domain(sp2);
-		sp1 = isl_space_align_params(sp1, isl_space_copy(sp2));
-		sp2 = isl_space_align_params(sp2, isl_space_copy(sp1));
-		sp2 = isl_space_map_from_domain_and_range(sp2, sp1);
-		isl_space_dump(sp2);
-		isl_multi_aff *mapb = isl_multi_aff_domain_map(sp2);
-		sched2depth = isl_pw_multi_aff_pullback_multi_aff(sched2depth,
-			mapb);
-#endif
-
-	//	sched2depth = isl_pw_multi_aff_product(sched2depth, apma);
-
 	}
 
 	if (s2d)
@@ -1928,39 +1879,6 @@ static __isl_give isl_multi_pw_aff *transform_index(
 
 ///////////////////////////////////
 
-#if 0
-		isl_space *ind_space = isl_multi_pw_aff_get_space(ind_tiling);
-		//ind_space = isl_space_wrap(ind_space);
-
-		isl_multi_aff *ind_ma;
-		ind_ma = isl_multi_aff_domain_map(ind_space);
-
-		ind_tiling = isl_multi_pw_aff_pullback_multi_aff(ind_tiling,
-			isl_multi_aff_copy(ind_ma));
-
-		isl_multi_pw_aff *ind_mpa;
-		ind_mpa = isl_multi_pw_aff_from_multi_aff(ind_ma);
-		ind_tiling = isl_multi_pw_aff_range_product(ind_mpa, ind_tiling);
-
-		isl_space *space = isl_multi_pw_aff_get_space(tiling);
-		space = isl_space_domain(space);
-		space = isl_space_unwrap(space);
-		space = isl_space_range(space);
-		space = isl_space_map_from_set(space);
-		isl_multi_aff *array_ma;
-		array_ma = isl_multi_aff_identity(space);
-		isl_multi_pw_aff *array_mpa;
-		array_mpa = isl_multi_pw_aff_from_multi_aff(array_ma);
-		ind_tiling = isl_multi_pw_aff_product(ind_tiling, array_mpa);
-
-		fprintf(stderr, "\n\n");
-		fprintf(stderr, "tiilng: "); isl_multi_pw_aff_dump(tiling);
-		//tiling = isl_multi_pw_aff_pullback_multi_pw_aff(tiling, ind_tiling);
-
-#endif
-		//fprintf(stderr, "\n\n");
-		//isl_multi_pw_aff_dump(ind_tiling);
-		//isl_multi_pw_aff_dump(tiling);
 	} else {
 		index = tile_outer(index, tiling, NULL, NULL);
 	}
@@ -2325,9 +2243,6 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 		ma = isl_multi_aff_range_product(mai, ma);
 		isl_map *m = isl_map_from_multi_aff(ma);
 		m = isl_map_factor_range(m);
-		//m = isl_map_reverse(m);
-		//isl_pw_multi_aff *pma = isl_pw_multi_aff_from_map(m);
-		//fprintf(stderr, "ma :: "); isl_pw_multi_aff_dump(pma);
 
 		isl_map *im = isl_map_from_pw_multi_aff(indPma2);
 		im = isl_map_apply_range(im, m);
