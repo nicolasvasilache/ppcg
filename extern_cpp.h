@@ -402,4 +402,10 @@ __isl_give isl_schedule_node *add_group_write_sync(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel,
 	struct gpu_array_ref_group *group, int shared);
 
+__isl_give isl_schedule_node *insert_sync_before(
+	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel);
+
+__isl_give isl_schedule_node *insert_sync_after(
+	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel);
+
 }
