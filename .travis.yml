@@ -19,7 +19,7 @@ cache:
 
 before_script:
         - export APT_CACHE_DIR=/tmp/apt-cache && mkdir -pv $APT_CACHE_DIR
-        - sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y && sudo apt-get update -yq && sudo apt-get -o dir::cache::archives="$APT_CACHE_DIR" install -y automake gcc-4.9 g++-4.9 git cmake3 libgmp3-dev libtool
+        - sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y && sudo apt-get update -yq && sudo apt-get -o dir::cache::archives="$APT_CACHE_DIR" install -y automake gcc-4.9 g++-4.9 git cmake3 libgmp3-dev libtool ncurses-dev
 
 script:
         - sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.9 90
