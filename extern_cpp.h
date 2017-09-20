@@ -414,4 +414,13 @@ __isl_give isl_schedule_node *insert_sync_before(
 __isl_give isl_schedule_node *insert_sync_after(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel);
 
+__isl_give isl_map* shared_access(
+    struct gpu_array_ref_group* group,
+    __isl_keep isl_union_map* access,
+    struct gpu_group_data* data);
+
+int compute_array_dim_size(
+    struct gpu_array_bound* bound,
+    __isl_take isl_basic_map* bounds);
+
 }
