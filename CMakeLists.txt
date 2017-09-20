@@ -74,6 +74,10 @@ else()
   include_directories(${PET_PREFIX}/include)
 endif()
 
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+execute_process(COMMAND ${CLANG_PREFIX}/bin/llvm-config --libdir  OUTPUT_VARIABLE LLVM_LIBDIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+link_directories(${LLVM_LIBDIR})
+
 if (NOT CMAKE_INSTALL_PREFIX)
   message(FATAL_ERROR "-DCMAKE_INSTALL_PREFIX=... required")
 endif()

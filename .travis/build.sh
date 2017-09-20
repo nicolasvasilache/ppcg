@@ -19,7 +19,7 @@ if ! test -e /tmp/install/lib/libpet.so; then
     cd ${TRAVIS_BUILD_DIR}/..
     git clone https://github.com/nicolasvasilache/pet.git && cd pet
     rm -Rf build && mkdir -p build && cd build
-    VERBOSE=1 cmake -DISL_PREFIX=/tmp/install -DCLANG_PREFIX=/tmp/clang+llvm/ -DCMAKE_INSTALL_PREFIX=/tmp/install -DTRAVIS=true ..
+    VERBOSE=1 cmake -DISL_PREFIX=/tmp/install -DCLANG_PREFIX=/tmp/clang+llvm/ -DCMAKE_INSTALL_PREFIX=/tmp/install -DUBUNTU=true ..
     VERBOSE=1 make -j ${CORES}
     ctest
     make install
