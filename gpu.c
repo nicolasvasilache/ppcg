@@ -1534,7 +1534,7 @@ static struct gpu_array_ref_group *find_ref_group(
  *
  * apply the tiling to the outer array in the index expression to obtain
  *
- *	L -> T(A)
+ *	L -> F(T)
  *
  * If F(A) is some subfield of A, then separate the member access
  * into the base index expression and the field index expression,
@@ -1549,10 +1549,24 @@ static struct gpu_array_ref_group *find_ref_group(
  * in terms of the AST loop iterators
  *
  *	L -> T
+ *
+ * If the index expression "index" corresponds to an indirect access and thus
+ * has the form
+ *
+ * 	[[L -> I] -> TI] -> F(A)
+ *
+ * additionally plug indrection expressions "indirection_orig" and
+ * "indirection_tiled", which have the shapes
+ *
+ * 	[L -> I]
+ * 	[L -> TI]
+ *
+ * into the domain of the index expression. 
  */
 static __isl_give isl_multi_pw_aff *tile_outer(
 	__isl_take isl_multi_pw_aff *index, __isl_take isl_multi_pw_aff *tiling,
-	__isl_take isl_multi_pw_aff *suborig, __isl_take isl_multi_pw_aff *subshared)
+	__isl_take isl_multi_pw_aff *indirection_orig,
+	__isl_take isl_multi_pw_aff *indirection_tiled)
 {
 	isl_bool is_wrapping;
 	isl_space *space;
@@ -1567,18 +1581,21 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 		field = isl_multi_pw_aff_copy(index);
 		field = isl_multi_pw_aff_range_factor_range(field);
 		index = isl_multi_pw_aff_range_factor_domain(index);
-		suborig = isl_multi_pw_aff_range_factor_domain(suborig);
-		subshared = isl_multi_pw_aff_range_factor_domain(subshared);
-		index = tile_outer(index, tiling, suborig, subshared);
+		indirection_orig = isl_multi_pw_aff_range_factor_domain(
+			indirection_orig);
+		indirection_tiled = isl_multi_pw_aff_range_factor_domain(
+			indirection_tiled);
+		index = tile_outer(index, tiling, indirection_orig,
+			indirection_tiled);
 		return isl_multi_pw_aff_range_product(index, field);
 	}
 
 	space = isl_space_domain(isl_multi_pw_aff_get_space(index));
 	space = isl_space_map_from_set(space);
 	mpa = isl_multi_pw_aff_identity(space);
-	if (suborig && subshared) {
-		mpa = isl_multi_pw_aff_range_product(mpa, suborig);
-		mpa = isl_multi_pw_aff_range_product(mpa, subshared);
+	if (indirection_orig && indirection_tiled) {
+		mpa = isl_multi_pw_aff_range_product(mpa, indirection_orig);
+		mpa = isl_multi_pw_aff_range_product(mpa, indirection_tiled);
 	}
 
 	index = isl_multi_pw_aff_range_product(mpa, index);
@@ -1591,71 +1608,62 @@ error:
 	return NULL;
 }
 
-/* Index transformation callback for pet_stmt_build_ast_exprs.
+/* Check if the array reference group "group" includes indirect subscripts.
  *
- * "index" expresses the array indices in terms of statement iterators
- *
- * We first reformulate "index" in terms of the AST loop iterators.
- * Then we check if we are accessing the global array or
- * a shared/private copy.  In particular, if we are not inside a kernel
- * then we must be accessing a global array.
- * In the former case, we simply return
- * the updated index.  If "index" is an affine expression rather
- * than an array access, then we also return the updated index here.
- *
- * If no reference groups have been computed for the array,
- * then we can only be accessing the global array.
- *
- * Otherwise, we apply the tiling to the index.
- * This tiling is of the form
- *
- *	[D -> A] -> T
- *
- * where D corresponds to the outer tile->depth dimensions of
- * the kernel schedule.
- * The index is of the form
- *
- *	L -> A
- *
- * We update the tiling to refer to the AST loop iterators
- *
- *	[L -> A] -> T
- *
- * and combine it with the index to obtain a tiled index expression in terms
- * of the AST loop iterators
- *
- *	L -> T
- *
- * Note that while the tiling applies directly to an outer array.
- * the index may refer to some subfield of this outer array.
- * In such cases, the result will refer to the same subfield of the tile.
- * That is, an index expression of the form  L -> F(A) will be transformed
- * into an index expression of the form L -> F(T).
+ * Since such accesses should not have been grouped, we check that there is
+ * only one access in the group, and that it has an indirection.
  */
+static inline int group_has_indirection(struct gpu_array_ref_group *group) {
+	return group->n_ref == 1 && group->refs[0]->indirection;
+}
 
+/* Transform the tiling of the array reference "group" group contained in its
+ * tile "tile" so that it is defined over the AST loop iterators.
+ *
+ * The tiling is of the following form for directly and indirectly accessed
+ * groups, respectively.
+ *
+ * 	[D -> A] -> TA
+ * 	[[[D -> I] -> TI] -> A] -> TA
+ *
+ * where D corresponds to the outer tile->depth dimensions of the kernel
+ * schedule, I corresponds to index array subscripts, TI corresponds to the
+ * tiled index array subscripts, A corresponds to the global array subscripts
+ * and TA corresponds to the tiled global array subscripts; the indirect access
+ * is expected to be of the shape A[I[...]];
+ *
+ * The copy schedule provided in "sched2copy" is used to compute the
+ *
+ * 	L -> D
+ *
+ * mapping, which is precmoposed with the tiling to obtain
+ *
+ * 	[L -> A] -> TA
+ * 	[[[L -> I] -> TI] -> A] -> TA
+ *
+ * for direct and indirect accesses, respectively.
+ */
 static __isl_give isl_multi_pw_aff *localize_tiling(
 	struct gpu_array_ref_group *group,
 	struct gpu_array_tile *tile,
-	struct ppcg_transform_data *data)
+	__isl_keep isl_pw_multi_aff *sched2copy)
 {
 	int dim;
 	isl_space *space;
 	isl_multi_pw_aff *tiling;
 	isl_pw_multi_aff *pma;
 	isl_pw_multi_aff *sched2depth;
+	isl_space *indirection_space;
+	int has_indirection;
+
+	has_indirection = group_has_indirection(group);
 
 	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));
 
-	isl_space *indirection_space;
-	indirection_space = isl_space_domain(isl_space_unwrap(isl_space_copy(space)));
-	isl_bool b = isl_space_is_wrapping(indirection_space);
-	if (b < 0) {
-		isl_space_free(space);
-		isl_space_free(indirection_space);
-		return NULL;
-	} else if (!b) {
-		isl_space_free(indirection_space);
-	} else {
+	if (has_indirection) {
+		indirection_space = isl_space_copy(space);
+		indirection_space = isl_space_unwrap(indirection_space);
+		indirection_space = isl_space_domain(indirection_space);
 		indirection_space = isl_space_unwrap(indirection_space);
 		indirection_space = isl_space_curry(indirection_space);
 		indirection_space = isl_space_range(indirection_space);
@@ -1664,35 +1672,12 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 	space = isl_space_range(isl_space_unwrap(space));
 	space = isl_space_map_from_set(space);
 	pma = isl_pw_multi_aff_identity(space);
-	sched2depth = isl_pw_multi_aff_copy(data->sched2copy);
+	sched2depth = isl_pw_multi_aff_copy(sched2copy);
 	dim = isl_pw_multi_aff_dim(sched2depth, isl_dim_out);
 	sched2depth = isl_pw_multi_aff_drop_dims(sched2depth, isl_dim_out,
 					    tile->depth, dim - tile->depth);
 
-	// tiling is in [[[D->I]->TI]->A]->TA
-	//
-	// need pma in space [[[L->I]->TI]->A]->[[[D->I]->TI]->A]
-	// start with sched2depth = in L->D (?) assuming some weirdness
-	// [L->I] -> [D->I]  // product with I->I identity
-	// [[L->I]->TI] -> [[D->I]->TI] // product with TI->TI identity
-	// [[[L->I]->TI]->A] -> [[[D->I]->TI]->A] // product with A->A identity
-	//
-	//
-	//
-	// have [L->TI] from indirection  and [L->D] from sched
-	// need [[[L->I]->TI]->A]->[[[D->I]->TI]->A]
-	// [L->I] -> [D->I]  // sched * I->I identity  (=x)
-	// [L->I] -> [TI->I] // indir * I->I identity
-	// [L->I] -> TI      // % factor domain  (=y)
-	// [L->I] -> [[D->I]->TI] // x *range y
-	// [[L->I]->TI] -> [L->I] // project_domain_map (=z)
-	// [[L->I]->TI] -> [[D->I]->TI] // y pullback z
-	//
-	// ?
-	// [[L->I]->TI'] -> [TI->TI'] // y * TI'->TI' identity (not sure TI=TI')
-	// [[L->I]->TI'] -> TI // % factor domain
-	
-	if (b) {
+	if (has_indirection) {
 		isl_space *s;
 		isl_pw_multi_aff *ipma;
 
@@ -1722,54 +1707,64 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 	return tiling;
 }
 
-static struct gpu_array_ref_group *ref_group_by_id(__isl_keep isl_id *ref_id,
-	struct ppcg_transform_data *data)
-{
-	struct gpu_array_ref_group *group;
-	struct gpu_stmt_access *access;
-	const char *name;
-	int i;
-
-	if (!data->kernel)
-		return NULL;
-
-	access = find_access(data->accesses, ref_id);
-	if (!access)
-		return NULL;
-	if (!isl_map_has_tuple_name(access->access, isl_dim_out))
-		return NULL;
-
-	name = get_outer_array_name(access->access);
-	i = find_array_index(data->kernel, name);
-	if (i < 0)
-		isl_die(isl_id_get_ctx(ref_id), isl_error_internal,
-			"cannot find array",
-			goto error);
-	data->local_array = &data->kernel->array[i];
-	data->array = data->local_array->array;
-
-	group = find_ref_group(data->local_array, access);
-	if (!group) {
-		data->global = 1;
-		return NULL;
-	}
-	return group;
-
-error:
-	group = isl_calloc_type(isl_id_get_ctx(ref_id), struct gpu_array_ref_group);
-	group->n_ref = -1;
-	return group;
-}
-
+/* Index transformation callback for pet_stmt_build_ast_exprs.
+ *
+ * "index" expresses the array indices in terms of statement iterators
+ *
+ * We first reformulate "index" in terms of the AST loop iterators.
+ * Then we check if we are accessing the global array or
+ * a shared/private copy.  In particular, if we are not inside a kernel
+ * then we must be accessing a global array.
+ * In the former case, we simply return
+ * the updated index.  If "index" is an affine expression rather
+ * than an array access, then we also return the updated index here.
+ *
+ * If no reference groups have been computed for the array,
+ * then we can only be accessing the global array.
+ *
+ * Otherwise, we apply the tiling to the index to obtain
+ *
+ * 	[L -> A] -> TA
+ * 
+ * or
+ *
+ * 	[[[L -> I] -> TI] -> A] -> TA
+ *
+ * for indirectly accessed arrays, where (TI) I stands for (tiled) index array.
+ * and combine it with the index to obtain a tiled index expression in terms
+ * of the AST loop iterators
+ *
+ *	L -> TA
+ *
+ * or
+ *
+ * 	[[L -> I] -> TI] -> TA
+ *
+ * For indirect arrays, we recursively transform the index of the inner array
+ * to first obtain
+ *
+ * 	L -> TI
+ *
+ * necessary for tiling.
+ *
+ * Note that while the tiling applies directly to an outer array.
+ * the index may refer to some subfield of this outer array.
+ * In such cases, the result will refer to the same subfield of the tile.
+ * That is, an index expression of the form  L -> F(A) will be transformed
+ * into an index expression of the form L -> F(T).
+ */
 static __isl_give isl_multi_pw_aff *transform_index(
 	__isl_take isl_multi_pw_aff *index, __isl_keep isl_id *ref_id,
 	void *user)
 {
 	struct ppcg_transform_data *data = user;
+	struct gpu_stmt_access *access;
 	struct gpu_array_ref_group *group;
 	struct gpu_array_tile *tile;
 	isl_pw_multi_aff *iterator_map;
+	int i;
 	int dim;
+	const char *name;
 	isl_space *space;
 	isl_multi_pw_aff *tiling;
 	isl_pw_multi_aff *pma;
@@ -1780,12 +1775,28 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	iterator_map = isl_pw_multi_aff_copy(data->iterator_map);
 	index = isl_multi_pw_aff_pullback_pw_multi_aff(index, iterator_map);
 
-	group = ref_group_by_id(ref_id, data);
-	if (!group)
+	if (!data->kernel)
 		return index;
-	if (group && group->n_ref == -1) {
-		free(group);
-		return isl_multi_pw_aff_free(index);
+
+	access = find_access(data->accesses, ref_id);
+	if (!access)
+		return index;
+	if (!isl_map_has_tuple_name(access->access, isl_dim_out))
+		return index;
+
+	name = get_outer_array_name(access->access);
+	i = find_array_index(data->kernel, name);
+	if (i < 0)
+		isl_die(isl_multi_pw_aff_get_ctx(index), isl_error_internal,
+			"cannot find array",
+			return isl_multi_pw_aff_free(index));
+	data->local_array = &data->kernel->array[i];
+	data->array = data->local_array->array;
+
+	group = find_ref_group(data->local_array, access);
+	if (!group) {
+		data->global = 1;
+		return index;
 	}
 
 	tile = gpu_array_ref_group_tile(group);
@@ -1793,15 +1804,14 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	if (!tile)
 		return index;
 
-	tiling = localize_tiling(group, tile, data);
+	tiling = localize_tiling(group, tile, data->sched2copy);
 	if (!tiling)
 		return isl_multi_pw_aff_free(index);
 
-	if (group->n_ref == 1 && group->refs[0]->indirection) {
+	if (group_has_indirection(group)) {
 		struct gpu_stmt_access *index_access =
 			group->refs[0]->indirection;
 
-		// indirection index will be  L->TI  from D->TI
 		isl_pw_multi_aff *apma = isl_pw_multi_aff_from_map(
 			isl_map_copy(index_access->access));
 		isl_multi_pw_aff *ampa = isl_multi_pw_aff_from_pw_multi_aff(
