@@ -2057,6 +2057,11 @@ static __isl_give isl_ast_node *create_domain_leaf(
 	return isl_ast_node_set_annotation(node, id);
 }
 
+/* Find an array reference group that contains an reference identified by
+ * "ref_id" in a given GPU kernel "kernel".
+ * 
+ * Return NULL if not found.
+ */
 static struct gpu_array_ref_group *find_group_by_id(struct ppcg_kernel *kernel,
 	__isl_keep isl_id *ref_id)
 {
@@ -2076,6 +2081,124 @@ static struct gpu_array_ref_group *find_group_by_id(struct ppcg_kernel *kernel,
 		}
 	}
 	return NULL;
+}
+
+/* Create an AST expression that corresponds to the indirect access subscript
+ * in the "build" context given the "tiling" of the index array of the form
+ *
+ *	[D -> I] -> TI
+ *
+ * and the original subscript connected to AST iterators L of the form
+ *
+ * 	L -> [D -> I]
+ * 
+ * we need to obtain the mapping from AST iterators to tiled index array
+ * subscripts of the form
+ *
+ * 	L -> TI
+ *
+ * First, we extract the mapping from AST iterators to untiled index array
+ * subcsripts from "ind_access". It has the form
+ *
+ * 	L -> I
+ *
+ * Then, we obtain the mapping between the global and tiled idnex array
+ * subscripts from the tiling function and compose it with the previous
+ * mapping. Note that we need to convert it to a map because
+ * map_factor_range behaves differently from multi_aff_factor_range: only the
+ * former allows us to properly obtain
+ *
+ * 	I -> TI
+ *
+ * from
+ *
+ * 	[D -> I] -> [D -> TI]
+ *
+ * without losing the relation imposed by equality of D's.
+ */
+static __isl_give isl_ast_expr *create_inner_expr(
+	__isl_keep isl_ast_build *build, __isl_take isl_multi_aff *tiling,
+	__isl_take isl_map *ind_access)
+{
+	isl_pw_multi_aff *ind_pma;
+	isl_pw_multi_aff *ind_pma2;
+	isl_space *ind_space;
+	isl_map *tiling_map;
+	isl_space *tiling_space;
+	isl_multi_aff *tiling2sched;
+
+	ind_space = isl_space_range(isl_map_get_space(ind_access));
+	ind_space = isl_space_unwrap(ind_space);
+	ind_pma = isl_pw_multi_aff_from_map(ind_access);
+	ind_space = isl_space_range(
+		isl_pw_multi_aff_get_space(ind_pma));
+	ind_space = isl_space_unwrap(ind_space);
+	ind_pma2 = isl_pw_multi_aff_range_map(ind_space);
+	ind_pma2 = isl_pw_multi_aff_pullback_pw_multi_aff(ind_pma2,
+		ind_pma);
+
+	tiling_space = isl_multi_aff_get_space(tiling);
+	tiling_space = isl_space_domain(tiling_space);
+	tiling_space = isl_space_unwrap(tiling_space);
+	tiling2sched = isl_multi_aff_domain_map(tiling_space);
+	tiling = isl_multi_aff_range_product(tiling2sched, tiling);
+
+	tiling_map = isl_map_from_multi_aff(tiling);
+	tiling_map = isl_map_factor_range(tiling_map);
+	ind_pma2 = isl_pw_multi_aff_pullback_pw_multi_aff(
+		isl_pw_multi_aff_from_map(tiling_map), ind_pma2);
+
+	return isl_ast_build_access_from_pw_multi_aff(build, ind_pma2);
+}
+
+/* Given an AST expression "expr" that corresponds to an indirect access to a
+ * global array accessed by "group" in "kernel", replace the indirect subscript
+ * in the expression with another AST expression that corresponds to the
+ * shared-memory materialization of the index array.
+ *
+ * Only shared memory promotion is supported.
+ * The group is expected to have only one reference (no grouping for indirectly
+ * accessed array) and be read-only.
+ *
+ * The schedule in "build" is of the form
+ *
+ * 	read[[[D -> I] -> TI] -> A] -> L
+ *
+ * where I is the original index array and TI its materialization in the shared
+ * memory. I and TI are not related in the expression and indirection is still
+ * expressed in terms of I. Therefore, we extract the original indirect
+ * subscript
+ *
+ *	L -> [D -> I]
+ *
+ * before combining it with the tiling of the indirect access to obtain the
+ * AST expression.
+ *
+ * FIXME: check support for affine expressions around the indirect access, i.e.
+ * A[j + I[k]].
+ */
+static isl_ast_expr *replace_indirect_subscript(__isl_take isl_ast_expr *expr,
+		__isl_keep isl_ast_build *build,
+		struct ppcg_kernel *kernel,
+		struct gpu_array_ref_group *group)
+{
+	isl_map *ind_access;
+	isl_ast_expr *ind_expr;
+	struct gpu_array_ref_group *ind_group;
+	
+	ind_access = isl_map_from_union_map(isl_ast_build_get_schedule(build));
+	ind_access = isl_map_reverse(ind_access);
+	ind_access = isl_map_range_factor_domain(ind_access);
+	ind_access = isl_map_range_factor_domain(ind_access);
+
+	ind_group = find_group_by_id(kernel,
+		group->refs[0]->indirection->ref_id);
+	ind_expr = create_inner_expr(build,
+		isl_multi_aff_copy(ind_group->shared_tile->tiling),
+		ind_access);
+	expr = isl_ast_expr_set_op_arg(expr,
+		group->refs[0]->indirect_index + 1, ind_expr);
+	return expr;
 }
 
 /* This function is called for each statement node in the AST
@@ -2130,19 +2253,9 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 		return isl_ast_node_free(node);
 
 	access = isl_map_from_union_map(isl_ast_build_get_schedule(build));
-
 	type = isl_map_get_tuple_name(access, isl_dim_in);
 	stmt->u.c.read = !strcmp(type, "read");
 	access = isl_map_reverse(access);
-
-	isl_map *indAccess = isl_map_copy(access);
-	indAccess = isl_map_range_factor_domain(indAccess);
-	if (isl_map_range_is_wrapping(indAccess)) {
-		indAccess = isl_map_range_factor_domain(indAccess);
-	} else {
-		indAccess = NULL;
-	}
-
 	pma = isl_pw_multi_aff_from_map(access);
 	pma = isl_pw_multi_aff_reset_tuple_id(pma, isl_dim_out);
 
@@ -2153,39 +2266,8 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 						    isl_pw_multi_aff_copy(pma));
 	expr = isl_ast_build_access_from_pw_multi_aff(build, pma2);
 
-	// FIXME: how about the affine expression around the indirection?
-	if (indAccess) {
-		struct gpu_array_ref_group *indGroup =
-			find_group_by_id(kernel,
-				group->refs[0]->indirection->ref_id);
-
-		isl_pw_multi_aff *indPma = isl_pw_multi_aff_from_map(indAccess);
-		isl_space *indSpace = isl_space_range(
-			isl_pw_multi_aff_get_space(indPma));
-		indSpace = isl_space_unwrap(indSpace);
-		isl_pw_multi_aff *indPma2 = isl_pw_multi_aff_range_map(indSpace);
-		indPma2 = isl_pw_multi_aff_pullback_pw_multi_aff(indPma2,
-			indPma);
-
-		isl_multi_aff *ma = isl_multi_aff_copy(indGroup->shared_tile->tiling);
-		isl_space *s = isl_multi_aff_get_space(ma);
-		s = isl_space_domain(s);
-		s = isl_space_unwrap(s);
-		isl_multi_aff *mai = isl_multi_aff_domain_map(s);
-		ma = isl_multi_aff_range_product(mai, ma);
-		isl_map *m = isl_map_from_multi_aff(ma);
-		m = isl_map_factor_range(m);
-
-		isl_map *im = isl_map_from_pw_multi_aff(indPma2);
-		im = isl_map_apply_range(im, m);
-		indPma2 = isl_pw_multi_aff_from_map(im);
-
-		isl_ast_expr *indExpr =
-			isl_ast_build_access_from_pw_multi_aff(build, indPma2);
-		
-		expr = isl_ast_expr_set_op_arg(expr,
-			group->refs[0]->indirect_index + 1, indExpr);
-	}
+	if (group_has_indirection(group))
+		expr = replace_indirect_subscript(expr, build, kernel, group);
 
 	if (group->array->linearize)
 		expr = gpu_local_array_info_linearize_index(group->local_array,
