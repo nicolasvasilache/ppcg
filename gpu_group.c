@@ -997,6 +997,9 @@ __isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
  * or if the access is not coalesced.
  * Reuse and coalescing are checked within the given kernel.
  *
+ * The access relation is intersected with the array extent so as to consider
+ * the entire array as a tile if it is small enough.
+ *
  * For computing a private memory tile, we also require that there is
  * some reuse.  Moreover, we require that the access is private
  * to the thread.  That is, we check that any given array element
@@ -1091,7 +1094,8 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 		group->shared_tile = gpu_array_tile_create(ctx,
 							group->array->n_index);
 		acc = shared_access(group, access, data);
-		acc = isl_map_intersect_range(acc, isl_set_copy(group->array->extent));
+		acc = isl_map_intersect_range(acc,
+			isl_set_copy(group->array->extent));
 		if (!group->shared_tile)
 			r = -1;
 		else if (!can_tile(acc, group->shared_tile))
