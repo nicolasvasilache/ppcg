@@ -889,15 +889,47 @@ static __isl_give isl_map *group_tile(struct gpu_array_ref_group *group)
 	return tile;
 }
 
+struct find_pw_multi_aff_by_space_data {
+	isl_space *space;
+	isl_pw_multi_aff *pma;
+};
+
+static isl_stat find_pw_multi_aff_domain_space(__isl_take isl_pw_multi_aff *pma,
+	void *user)
+{
+	struct find_pw_multi_aff_by_space_data *data = user;
+	isl_space *space;
+	isl_bool r;
+
+	if (!data || !data->space)
+		goto error;
+
+	space = isl_pw_multi_aff_get_space(pma);
+	r = isl_space_tuple_is_equal(space, isl_dim_in,
+		data->space, isl_dim_set);
+	isl_space_free(space);
+	if (r < 0)
+		goto error;
+	if (r) {
+		if (data->pma)
+			goto error;
+		data->pma = pma;
+	} else {
+		isl_pw_multi_aff_free(pma);
+	}
+
+	return isl_stat_ok;
+
+error:
+	isl_pw_multi_aff_free(pma);
+	return isl_stat_error;
+}
+
 /* Given a mapping "iterator_map" from the AST schedule to a domain,
  * return the corresponding mapping from the AST schedule to
- * to the outer kernel->copy_schedule_dim dimensions of
- * the schedule computed by PPCG for this kernel.
- *
- * Note that kernel->copy_schedule_dim is at least as large as
- * the largest depth of any array reference group associated to the kernel.
- * This is needed as the returned schedule is used to extract a mapping
- * to the outer tile->depth dimensions in transform_index.
+ * to the outer D dimensions of the schedule computed by PPCG for this kernel,
+ * where D is the number of dimensions affecting the copy_schedule for the
+ * statement.
  */
 static __isl_give isl_pw_multi_aff *compute_sched_to_copy(
 	struct ppcg_kernel *kernel, __isl_take isl_pw_multi_aff *iterator_map)
@@ -907,13 +939,17 @@ static __isl_give isl_pw_multi_aff *compute_sched_to_copy(
 	isl_space *space;
 
 	space = isl_space_range(isl_pw_multi_aff_get_space(iterator_map));
-	space = isl_space_from_domain(space);
-	space = isl_space_add_dims(space, isl_dim_out,
-					kernel->copy_schedule_dim);
-
-	upma = isl_union_pw_multi_aff_copy(kernel->copy_schedule);
-	pma = isl_union_pw_multi_aff_extract_pw_multi_aff(upma, space);
-	isl_union_pw_multi_aff_free(upma);
+	struct find_pw_multi_aff_by_space_data data = { space, NULL };
+	if (isl_union_pw_multi_aff_foreach_pw_multi_aff(
+			kernel->copy_schedule,
+			&find_pw_multi_aff_domain_space,
+			&data) < 0) {
+		isl_pw_multi_aff_free(data.pma);
+		isl_space_free(space);
+		return isl_pw_multi_aff_free(iterator_map);
+	}
+	isl_space_free(space);
+	pma = data.pma;
 
 	return isl_pw_multi_aff_pullback_pw_multi_aff(pma, iterator_map);
 }
@@ -1444,9 +1480,9 @@ static int find_array_index(struct ppcg_kernel *kernel, const char *name)
  * "accesses" is the list of gpu_stmt_access in the statement.
  * "iterator_map" expresses the statement iterators in terms of
  * the AST loop iterators.
- * "sched2copy" expresses the outer copy_schedule_dim dimensions of
- * the kernel schedule in terms of the AST loop iterators and
- * may be NULL if we are not inside a kernel.
+ * "sched2copy" expresses the outer dimensions of the kernel schedule that
+ * affect the copy in terms of the AST loop iterators and may be NULL if we are
+ * not inside a kernel.
  *
  * The following fields are set in transform_index and used in transform_expr.
  * "array" is the array that is being accessed.
@@ -1830,8 +1866,8 @@ static __isl_give isl_ast_expr *transform_expr(__isl_take isl_ast_expr *expr,
  * These AST expressions are computed from iterator_map,
  * which expresses the domain
  * elements in terms of the generated loops, and sched2copy,
- * which expresses the outer copy_schedule_dim dimensions of
- * the kernel schedule computed by PPCG in terms of the generated loops.
+ * which expresses the outer dimensions of the kernel schedule that affect the
+ * copy, computed by PPCG in terms of the generated loops.
  */
 static __isl_give isl_ast_node *create_domain_leaf(
 	struct ppcg_kernel *kernel, __isl_take isl_ast_node *node,
@@ -3942,7 +3978,6 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	}
 
 	node = gpu_tree_move_up_to_thread(node);
-	kernel->copy_schedule_dim = isl_schedule_node_get_schedule_depth(node);
 	kernel->copy_schedule =
 		isl_schedule_node_get_prefix_schedule_union_pw_multi_aff(node);
 	contraction = isl_union_pw_multi_aff_copy(kernel->contraction);

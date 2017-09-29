@@ -377,7 +377,6 @@ struct ppcg_kernel_var {
  * for computing private/shared memory tiles.
  * The domain corresponds to the original statement instances, i.e.,
  * those that appear in the leaves of the schedule tree.
- * copy_schedule_dim is the dimension of this schedule.
  *
  * sync_writes contains write references that require synchronization.
  * Each reference is represented by a universe set in a space [S[i,j] -> R[]]
@@ -423,7 +422,6 @@ struct ppcg_kernel {
 	isl_union_set *block_filter;
 	isl_union_set *thread_filter;
 	isl_union_pw_multi_aff *copy_schedule;
-	int copy_schedule_dim;
 
 	isl_union_set *sync_writes;
 
