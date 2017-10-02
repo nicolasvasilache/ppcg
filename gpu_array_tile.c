@@ -51,8 +51,10 @@ struct gpu_array_tile *gpu_array_tile_create(isl_ctx *ctx, int n_index)
 	return tile;
 }
 
-/* Compute the size of the tile specified by "tile"
- * in number of elements and return the result.
+/* Compute the size of the tile specified by "tile" in number of elements and
+ * return the result.
+ * Take into account the fact that the last size is increased by one during
+ * declaration generation as a heuristic to avoid bank conflicts.
  */
 __isl_give isl_val *gpu_array_tile_size(struct gpu_array_tile *tile)
 {
@@ -64,8 +66,14 @@ __isl_give isl_val *gpu_array_tile_size(struct gpu_array_tile *tile)
 
 	size = isl_val_one(tile->ctx);
 
-	for (i = 0; i < tile->n; ++i)
+	for (i = 0; i < tile->n - 1; ++i)
 		size = isl_val_mul(size, isl_val_copy(tile->bound[i].size));
+
+	if (tile->n >= 1) {
+		isl_val *sz = isl_val_copy(tile->bound[tile->n - 1].size);
+		sz = isl_val_add_ui(sz, 1);
+		size = isl_val_mul(size, sz);
+	}
 
 	return size;
 }
