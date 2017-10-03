@@ -251,6 +251,12 @@ void ppcg_kernel_free_wrap(void *user);
  */
 void read_grid_and_block_sizes(struct ppcg_kernel *kernel, struct gpu_gen *gen);
 
+/* Add parameters p[i] with identifiers "ids" to "set",
+ * with bounds to 0 <= p[i] < size[i].
+ */
+__isl_give isl_set *add_bounded_parameters(__isl_take isl_set *set,
+	int *size, __isl_keep isl_id_list *ids);
+
 /* Scale a band node that may have been split by split_band.
  * "sizes" are the scaling factors for the original node.
  * "node" either points to the original band node, or the outer
