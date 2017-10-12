@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <isl/val.h>
 #include <isl/aff.h>
 #include <isl/set.h>
 #include <isl/map.h>
@@ -546,6 +547,265 @@ __isl_give isl_schedule_node *ppcg_schedule_node_band_set_properties(
 
 	node = band_set_permutable(node, sc);
 	node = band_set_coincident(node, sc);
+
+	return node;
+}
+
+/* Are all children of the sequence node "node" band nodes
+ * living in "space"?
+ * "space" has been obtained from the first child, so the first child
+ * does not need to be checked.
+ */
+static isl_bool band_children_with_space(__isl_keep isl_schedule_node *node,
+	__isl_keep isl_space *space)
+{
+	enum isl_schedule_node_type type;
+	int i, n;
+	isl_bool ok;
+
+	n = isl_schedule_node_n_children(node);
+
+	ok = isl_bool_true;
+	for (i = 1; ok == isl_bool_true && i < n; ++i) {
+		isl_schedule_node *child;
+
+		child = isl_schedule_node_get_child(node, i);
+		child = isl_schedule_node_child(child, 0);
+		type = isl_schedule_node_get_type(child);
+		if (type < 0)
+			ok = isl_bool_error;
+		else if (type != isl_schedule_node_band) {
+			ok = isl_bool_false;
+		} else {
+			isl_space *space2;
+
+			space2 = isl_schedule_node_band_get_space(child);
+			ok = isl_space_has_equal_tuples(space, space2);
+			isl_space_free(space2);
+		}
+		isl_schedule_node_free(child);
+	}
+
+	return ok;
+}
+
+/* Does "node" point to a tree of the form
+ *
+ *      S
+ *  ____|____
+ *  |   |   |
+ *  B  ...  B
+ *
+ * with B band nodes and S a sequence node, and
+ * with all B nodes living in the same space?
+ */
+static isl_bool sequence_with_equal_spaced_band_children(
+	__isl_keep isl_schedule_node *node)
+{
+	enum isl_schedule_node_type type;
+	isl_bool ok;
+
+	type = isl_schedule_node_get_type(node);
+	if (type < 0)
+		return isl_bool_error;
+	if (type != isl_schedule_node_sequence)
+		return isl_bool_false;
+
+	node = isl_schedule_node_copy(node);
+	node = isl_schedule_node_child(node, 0);
+	node = isl_schedule_node_child(node, 0);
+
+	type = isl_schedule_node_get_type(node);
+	if (type < 0)
+		ok = isl_bool_error;
+	else
+		ok = type == isl_schedule_node_band;
+
+	if (ok == isl_bool_true) {
+		isl_space *space;
+
+		space = isl_schedule_node_band_get_space(node);
+		node = isl_schedule_node_ancestor(node, 2);
+		ok = band_children_with_space(node, space);
+		isl_space_free(space);
+	}
+
+	isl_schedule_node_free(node);
+	return ok;
+}
+
+/* Does "node" have the right shape for applying
+ * cross band tiling?
+ * That is, does "node" point to a tree of the form
+ *
+ *      A
+ *      |
+ *      S
+ *  ____|____
+ *  |   |   |
+ *  B  ...  B
+ *
+ * with A and B band nodes and S a sequence node, and
+ * with all B nodes living in the same space?
+ */
+isl_bool ppcg_schedule_node_has_cross_tile_shape(
+	__isl_keep isl_schedule_node *node)
+{
+	enum isl_schedule_node_type type;
+	isl_bool ok;
+
+	type = isl_schedule_node_get_type(node);
+	if (type < 0)
+		return isl_bool_error;
+	if (type != isl_schedule_node_band)
+		return isl_bool_false;
+
+	node = isl_schedule_node_get_child(node, 0);
+	ok = sequence_with_equal_spaced_band_children(node);
+	isl_schedule_node_free(node);
+
+	return ok;
+}
+
+/* Assuming that "node" points to a tree of the form
+ *
+ *      A
+ *      |
+ *      S
+ *  ____|____
+ *  |   |   |
+ *  B  ...  B
+ *
+ * with A and B band nodes and S a sequence node, and
+ * with all B nodes living in the same space,
+ * return the product of the spaces of A and B.
+ */
+__isl_give isl_space *ppcg_schedule_node_get_cross_tile_space(
+	__isl_keep isl_schedule_node *node)
+{
+	isl_space *space, *space2;
+
+	space = isl_schedule_node_band_get_space(node);
+	node = isl_schedule_node_get_child(node, 0);
+	node = isl_schedule_node_child(node, 0);
+	node = isl_schedule_node_child(node, 0);
+	space2 = isl_schedule_node_band_get_space(node);
+	isl_schedule_node_free(node);
+
+	return isl_space_product(space, space2);
+}
+
+/* Are all members of the band node "node" marked coincident?
+ */
+static isl_bool all_coincident(__isl_keep isl_schedule_node *node)
+{
+	int i, n;
+
+	if (!node)
+		return isl_bool_error;
+
+	n = isl_schedule_node_band_n_member(node);
+
+	for (i = 0; i < n; ++i) {
+		isl_bool ok;
+
+		ok = isl_schedule_node_band_member_get_coincident(node, i);
+		if (ok < 0 || !ok)
+			return ok;
+	}
+
+	return isl_bool_true;
+}
+
+/* Is is obvious that cross band tiling can be applied at "node"?
+ * That is, does the schedule tree have the right shape and
+ * are all members of "node" marked coincident?
+ * A fully coincident band can be trivially pushed down the tree.
+ * This assumes that the coincidence marking is consistent with
+ * the (other) schedule constraints.
+ */
+isl_bool ppcg_schedule_node_plain_can_cross_tile(
+	__isl_keep isl_schedule_node *node)
+{
+	isl_bool shape;
+
+	shape = ppcg_schedule_node_has_cross_tile_shape(node);
+	if (shape < 0 || !shape)
+		return shape;
+
+	return all_coincident(node);
+}
+
+/* Perform cross band tiling at "node" with tile sizes specified by "sizes".
+ * "node" is expected to point to a subtree of the form
+ *
+ *      A
+ *      |
+ *      S
+ *  ____|____
+ *  |   |   |
+ *  B  ...  B
+ *
+ * with A and B band nodes and S a sequence node.
+ * Furthermore, all B nodes have the same space.
+ * The space of "sizes" is the product of that of A and B,
+ * i.e., the space returned by ppcg_schedule_node_get_cross_tile_space.
+ *
+ * The result is of the form
+ *
+ *      TA
+ *      |
+ *      S
+ *  ____|____
+ *  |   |   |
+ *  TB ...  TB
+ *  |       |
+ *  PA      PA
+ *  PB      PB
+ *
+ * with TX and PX the tile and point bands of X.
+ * "sc" is used to determine the properties of PA;PB.
+ *
+ * The caller is responsible for ensuring that cross tiling is valid.
+ * In particular, it needs to be possible to push down PA
+ * without affecting the validity of the rest of the tree.
+ *
+ * First tile A and push PA through the sequence.
+ * Then tile B in each branch, push PA through TB, combine
+ * PA and PB into a single band and determine its properties.
+ */
+__isl_give isl_schedule_node *ppcg_schedule_node_cross_tile(
+	__isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes,
+	__isl_keep isl_schedule_constraints *sc)
+{
+	int i, n;
+	isl_multi_val *outer_sizes;
+
+	outer_sizes = isl_multi_val_copy(sizes);
+	outer_sizes = isl_multi_val_factor_domain(outer_sizes);
+	node = isl_schedule_node_band_tile(node, outer_sizes);
+	sizes = isl_multi_val_factor_range(sizes);
+
+	node = isl_schedule_node_child(node, 0);
+	node = isl_schedule_node_band_lower(node);
+
+	n = isl_schedule_node_n_children(node);
+	for (i = 0; i < n; ++i) {
+		node = isl_schedule_node_child(node, i);
+		node = isl_schedule_node_child(node, 0);
+		node = isl_schedule_node_child(node, 0);
+		node = isl_schedule_node_band_tile(node,
+						    isl_multi_val_copy(sizes));
+		node = isl_schedule_node_parent(node);
+		node = isl_schedule_node_band_lower(node);
+		node = isl_schedule_node_child(node, 0);
+		node = isl_schedule_node_band_join_child(node);
+		node = ppcg_schedule_node_band_set_properties(node, sc);
+		node = isl_schedule_node_ancestor(node, 3);
+	}
+	isl_multi_val_free(sizes);
+
+	node = isl_schedule_node_parent(node);
 
 	return node;
 }
