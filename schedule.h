@@ -32,6 +32,8 @@ isl_bool ppcg_schedule_node_has_cross_tile_shape(
 	__isl_keep isl_schedule_node *node);
 isl_bool ppcg_schedule_node_plain_can_cross_tile(
 	__isl_keep isl_schedule_node *node);
+isl_bool ppcg_schedule_node_can_cross_tile(__isl_keep isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc);
 __isl_give isl_space *ppcg_schedule_node_get_cross_tile_space(
 	__isl_keep isl_schedule_node *node);
 __isl_give isl_schedule_node *ppcg_schedule_node_cross_tile(

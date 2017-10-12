@@ -717,12 +717,21 @@ static isl_bool all_coincident(__isl_keep isl_schedule_node *node)
 	return isl_bool_true;
 }
 
-/* Is is obvious that cross band tiling can be applied at "node"?
- * That is, does the schedule tree have the right shape and
- * are all members of "node" marked coincident?
+/* Is is obvious that cross band tiling can be applied at "node",
+ * given that the schedule tree has the right shape?
+ * That is, are all members of "node" marked coincident?
  * A fully coincident band can be trivially pushed down the tree.
  * This assumes that the coincidence marking is consistent with
  * the (other) schedule constraints.
+ */
+static isl_bool plain_can_cross_tile(__isl_keep isl_schedule_node *node)
+{
+	return all_coincident(node);
+}
+
+/* Is is obvious that cross band tiling can be applied at "node"?
+ * That is, does the schedule tree have the right shape and
+ * are all members of "node" marked coincident?
  */
 isl_bool ppcg_schedule_node_plain_can_cross_tile(
 	__isl_keep isl_schedule_node *node)
@@ -733,7 +742,195 @@ isl_bool ppcg_schedule_node_plain_can_cross_tile(
 	if (shape < 0 || !shape)
 		return shape;
 
-	return all_coincident(node);
+	return plain_can_cross_tile(node);
+}
+
+/* Intersect domain and range of "umap" with "uset".
+ */
+static __isl_give isl_union_map *intersect_untagged_domains(
+	__isl_take isl_union_map *umap, __isl_keep isl_union_set *uset)
+{
+	umap = isl_union_map_intersect_domain(umap, isl_union_set_copy(uset));
+	umap = isl_union_map_intersect_range(umap, isl_union_set_copy(uset));
+	return umap;
+}
+
+/* Given a binary relation "umap" between tagged domain instances,
+ * restrict the (untagged) domain instances to "uset".
+ * That is, intersect the domain instances embedded
+ * in domain and range of "umap" with "uset".
+ */
+static __isl_give isl_union_map *intersect_tagged_domains(
+	__isl_take isl_union_map *umap, __isl_keep isl_union_set *uset)
+{
+	umap = isl_union_map_intersect_domain_wrapped_domain(umap,
+						    isl_union_set_copy(uset));
+	umap = isl_union_map_intersect_range_wrapped_domain(umap,
+						    isl_union_set_copy(uset));
+	return umap;
+}
+
+/* Given a pointer "node" to a filter child of a sequence node that
+ * itself has a band node as child,
+ * is the band node valid with respect to the given
+ * (conditional) validity constraints?
+ * The conditions are evaluated in terms of the band node schedule
+ * combined with "outer".
+ * Both the (conditional) validity constraints and "outer"
+ * are formulated in terms of domain instances at the leaves.
+ * "contraction" maps those instances to the instances active at "node".
+ *
+ * Only the constraints that apply to statement instances that
+ * reach the band node are relevant, so the constraints
+ * are intersected with the filter of "node".
+ */
+static isl_bool is_valid_at( __isl_keep isl_schedule_node *node,
+	__isl_keep isl_union_map *validity,
+	__isl_keep isl_union_map *condition,
+	__isl_keep isl_union_map *conditional,
+	__isl_keep isl_union_pw_multi_aff *contraction,
+	__isl_keep isl_multi_union_pw_aff *outer)
+{
+	int n_outer;
+	isl_bool valid;
+	isl_union_set *filter;
+	isl_multi_union_pw_aff *partial;
+
+	n_outer = isl_multi_union_pw_aff_dim(outer, isl_dim_set);
+
+	filter = isl_schedule_node_filter_get_filter(node);
+	filter = isl_union_set_preimage_union_pw_multi_aff(filter,
+				    isl_union_pw_multi_aff_copy(contraction));
+	validity = isl_union_map_copy(validity);
+	validity = intersect_untagged_domains(validity, filter);
+	condition = isl_union_map_copy(condition);
+	condition = intersect_tagged_domains(condition, filter);
+	conditional = isl_union_map_copy(conditional);
+	conditional = intersect_tagged_domains(conditional, filter);
+
+	outer = isl_multi_union_pw_aff_copy(outer);
+	outer = isl_multi_union_pw_aff_intersect_domain(outer, filter);
+
+	node = isl_schedule_node_copy(node);
+	node = isl_schedule_node_child(node, 0);
+	partial = isl_schedule_node_band_get_partial_schedule(node);
+	isl_schedule_node_free(node);
+	partial = isl_multi_union_pw_aff_pullback_union_pw_multi_aff(partial,
+				    isl_union_pw_multi_aff_copy(contraction));
+	partial = isl_multi_union_pw_aff_range_product(outer, partial);
+
+	valid = valid_members(partial, n_outer,
+				validity, condition, conditional);
+
+	isl_multi_union_pw_aff_free(partial);
+
+	isl_union_map_free(conditional);
+	isl_union_map_free(condition);
+	isl_union_map_free(validity);
+
+	return valid;
+}
+
+/* Can cross band tiling be applied at "node",
+ * given that the schedule tree has the right shape?
+ *
+ * That is, given a tree of the form
+ *
+ *      A
+ *      |
+ *      S
+ *  ____|____
+ *  |   |   |
+ *  B  ...  B
+ *
+ * can node A be pushed down?
+ * In other words, are sequence node S and band nodes B valid
+ * with respect to the schedule constraints at node A?
+ * The schedule constraints "sc" are assumed to be formulated
+ * in terms of the domain instances at the leaf nodes of the tree.
+ *
+ * Since the point bands of A and B will be combined into a single node,
+ * the conditions of the conditional validity constraints need
+ * to be evaluated with respect to their combined partial schedule.
+ */
+static isl_bool can_cross_tile(__isl_keep isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc)
+{
+	isl_bool valid;
+	isl_union_map *validity, *condition, *conditional;
+	isl_union_pw_multi_aff *contraction;
+	isl_multi_union_pw_aff *partial, *outer;
+	isl_schedule_node *seq;
+	int i, n;
+
+	validity = get_local_validity(node, sc);
+	condition = get_local_conditional_validity_condition(node, sc);
+	conditional = get_local_conditional_validity(node, sc);
+
+	contraction = isl_schedule_node_get_subtree_contraction(node);
+
+	seq = isl_schedule_node_get_child(node, 0);
+	partial =
+	    isl_schedule_node_sequence_get_partial_schedule_multi_union_pw_aff(
+		seq);
+
+	partial = isl_multi_union_pw_aff_pullback_union_pw_multi_aff(partial,
+				    isl_union_pw_multi_aff_copy(contraction));
+	valid = valid_members(partial, 0, validity, condition, conditional);
+	isl_multi_union_pw_aff_free(partial);
+
+	outer = isl_schedule_node_band_get_partial_schedule(node);
+	outer = isl_multi_union_pw_aff_pullback_union_pw_multi_aff(outer,
+				    isl_union_pw_multi_aff_copy(contraction));
+
+	n = isl_schedule_node_n_children(seq);
+	for (i = 0; valid == isl_bool_true && i < n; ++i) {
+		isl_schedule_node *child;
+
+		child = isl_schedule_node_get_child(seq, i);
+		valid = is_valid_at(child, validity, condition, conditional,
+				    contraction, outer);
+		isl_schedule_node_free(child);
+	}
+
+	isl_schedule_node_free(seq);
+
+	isl_multi_union_pw_aff_free(outer);
+	isl_union_pw_multi_aff_free(contraction);
+	isl_union_map_free(validity);
+	isl_union_map_free(condition);
+	isl_union_map_free(conditional);
+
+	return valid;
+}
+
+/* Can cross band tiling be applied at "node"?
+ * That is, does the schedule tree have the right shape and
+ * can the top level band be pushed down without affecting
+ * the validity of the tree?
+ * The schedule constraints "sc" are used to determine
+ * the validity of pushing the node down.
+ * They are assumed to be formulated
+ * in terms of the domain instances at the leaf nodes of the tree.
+ *
+ * First check if the node can trivially be pushed down.
+ * Otherwise, use the schedule constraints to check
+ * if it can be pushed down.
+ */
+isl_bool ppcg_schedule_node_can_cross_tile(__isl_keep isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc)
+{
+	isl_bool shape, plain;
+
+	shape = ppcg_schedule_node_has_cross_tile_shape(node);
+	if (shape < 0 || !shape)
+		return shape;
+
+	plain = plain_can_cross_tile(node);
+	if (plain < 0 || plain)
+		return plain;
+
+	return can_cross_tile(node, sc);
 }
 
 /* Perform cross band tiling at "node" with tile sizes specified by "sizes".
