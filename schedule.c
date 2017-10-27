@@ -199,6 +199,34 @@ __isl_give isl_schedule_node *ppcg_set_schedule_node_type(
 	return node;
 }
 
+/* Given a partial schedule "partial" at "node", expand it to operate
+ * on domain instances at the leaves.
+ */
+static __isl_give isl_multi_union_pw_aff *expand_partial(
+	__isl_keep isl_schedule_node *node,
+	__isl_take isl_multi_union_pw_aff *partial)
+{
+	isl_union_pw_multi_aff *con;
+
+	con = isl_schedule_node_get_subtree_contraction(node);
+	return isl_multi_union_pw_aff_pullback_union_pw_multi_aff(partial, con);
+}
+
+/* Given a relation "untagged" between pairs of domain instances
+ * at the leaves of the schedule tree, select those
+ * that are scheduled together by the ancestors of "node".
+ * That is, select those that have the same value for the prefix schedule.
+ */
+static __isl_give isl_union_map *localize_untagged(
+	__isl_keep isl_schedule_node *node, __isl_take isl_union_map *untagged)
+{
+	isl_multi_union_pw_aff *prefix;
+
+	prefix = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(node);
+	prefix = expand_partial(node, prefix);
+	return isl_union_map_eq_at_multi_union_pw_aff(untagged, prefix);
+}
+
 /* If the band node "node" has exactly one member then mark it permutable.
  */
 static __isl_give isl_schedule_node *band_set_permutable(
@@ -221,15 +249,11 @@ static __isl_give isl_union_map *get_local_coincidence(
 	__isl_keep isl_schedule_constraints *sc)
 {
 	isl_union_map *coincidence;
-	isl_multi_union_pw_aff *prefix;
-	isl_union_pw_multi_aff *contraction;
 
 	coincidence = isl_schedule_constraints_get_coincidence(sc);
-	contraction = isl_schedule_node_get_subtree_contraction(node);
-	prefix = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(node);
-	prefix = isl_multi_union_pw_aff_pullback_union_pw_multi_aff(prefix,
-								contraction);
-	return isl_union_map_eq_at_multi_union_pw_aff(coincidence, prefix);
+	coincidence = localize_untagged(node, coincidence);
+
+	return coincidence;
 }
 
 /* For each member in the band node "node", determine whether
