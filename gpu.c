@@ -233,7 +233,7 @@ static int extract_array_info(struct gpu_prog *prog,
 /* Remove independence from the order constraints "order" on array "array".
  * Since the pairs of iterations in the filter relation of an independence
  * are guaranteed to be completely independent by the user, there is
- * no need to ensure that live ranges are ordered along thong pairs.
+ * no need to ensure that live ranges are ordered along those pairs.
  * We make an exception for local variables, though, as the independence
  * guarantee does not apply to those.
  *
@@ -2823,67 +2823,50 @@ __isl_give isl_union_map *extract_sizes_from_str(isl_ctx *ctx, const char *str)
 /* Can "node" be tiled and then mapped to block and thread identifiers?
  * That is, is it permutable with at least one coincident dimension?
  */
-static int is_permutable(__isl_keep isl_schedule_node *node)
+static isl_bool is_permutable(__isl_keep isl_schedule_node *node)
 {
 	if (!node)
-		return -1;
+		return isl_bool_error;
 
 	if (isl_schedule_node_get_type(node) != isl_schedule_node_band)
-		return 0;
+		return isl_bool_false;
 	if (!isl_schedule_node_band_get_permutable(node))
-		return 0;
+		return isl_bool_false;
 	if (isl_schedule_node_band_n_member(node) < 1)
-		return 0;
+		return isl_bool_false;
 	if (!isl_schedule_node_band_member_get_coincident(node, 0))
-		return 0;
+		return isl_bool_false;
 
-	return 1;
+	return isl_bool_true;
 }
 
-/* A isl_schedule_foreach_schedule_node_top_down callback
- * for setting *any_permutable and aborting the search
- * if "node" is a permutable band with coincident dimensions.
- * Otherwise, continue searching.
+/* Is "node" not a suitably permutable band?
  */
-static isl_bool set_permutable(__isl_keep isl_schedule_node *node, void *user)
+static isl_bool not_permutable(__isl_keep isl_schedule_node *node, void *user)
 {
-	int *any_permutable = user;
-	int permutable;
-
-	permutable = is_permutable(node);
-	if (permutable < 0)
-		return isl_bool_error;
-	if (!permutable)
-		return isl_bool_true;
-
-	*any_permutable = 1;
-
-	return isl_bool_error;
+	return isl_bool_not(is_permutable(node));
 }
 
 /* Does the subtree rooted at "node" have any suitably permutable band nodes?
  * That is, does it have any nodes that are permutable and that
  * have a least one coincident dimension?
  */
-static int subtree_has_permutable_bands(__isl_keep isl_schedule_node *node)
+static isl_bool subtree_has_permutable_bands(__isl_keep isl_schedule_node *node)
 {
-	int any_parallelism = 0;
+	isl_bool all_non_permutable;
 
-	if (isl_schedule_node_foreach_descendant_top_down(node, &set_permutable,
-						&any_parallelism) < 0 &&
-	    !any_parallelism)
-		return -1;
-
-	return any_parallelism;
+	all_non_permutable = isl_schedule_node_every_descendant(node,
+						&not_permutable, NULL);
+	return isl_bool_not(all_non_permutable);
 }
 
 /* Does "schedule" contain any permutable band with at least one coincident
  * member?
  */
-static int has_any_permutable_node(__isl_keep isl_schedule *schedule)
+static isl_bool has_any_permutable_node(__isl_keep isl_schedule *schedule)
 {
 	isl_schedule_node *root;
-	int any_permutable;
+	isl_bool any_permutable;
 
 	root = isl_schedule_get_root(schedule);
 	any_permutable = subtree_has_permutable_bands(root);
@@ -2902,7 +2885,7 @@ static int has_any_permutable_node(__isl_keep isl_schedule *schedule)
  */
 static int is_candidate(__isl_keep isl_schedule_node *node)
 {
-	int permutable;
+	isl_bool permutable;
 
 	if (isl_schedule_node_get_type(node) == isl_schedule_node_leaf)
 		return 1;
@@ -4742,8 +4725,6 @@ static __isl_give isl_schedule_constraints *construct_schedule_constraints(
 	sc = isl_schedule_constraints_set_coincidence(sc, coincidence);
 	sc = isl_schedule_constraints_set_proximity(sc, proximity);
 
-	if (prog->scop->options->debug->dump_schedule_constraints)
-		isl_schedule_constraints_dump(sc);
 	return sc;
 }
 
@@ -6157,7 +6138,7 @@ static __isl_give isl_printer *generate(__isl_take isl_printer *p,
 	struct gpu_prog *prog;
 	isl_ctx *ctx;
 	isl_schedule *schedule;
-	int any_permutable;
+	isl_bool any_permutable;
 
 	if (!scop)
 		return isl_printer_free(p);

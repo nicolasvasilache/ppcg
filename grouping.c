@@ -18,12 +18,15 @@
 #include <isl/schedule.h>
 #include <isl/schedule_node.h>
 
-#include "ppcg.h"
+#include "grouping.h"
+#include "schedule.h"
 
 /* Internal data structure for use during the detection of statements
  * that can be grouped.
  *
  * "sc" contains the original schedule constraints (not a copy).
+ * The validity constraints of "sc" are adjusted based on the groups
+ * found so far.
  * "dep" contains the intersection of the validity and the proximity
  * constraints in "sc".  It may be NULL if it has not been computed yet.
  * "group_id" is the identifier for the next group that is extracted.
@@ -453,6 +456,42 @@ static isl_union_pw_multi_aff *group_contraction_from_prefix_and_domain(
 	return isl_union_pw_multi_aff_from_multi_union_pw_aff(prefix);
 }
 
+/* Remove the validity schedule constraints from "sc" between
+ * statement instances that get contracted to the same group instance
+ * by the contraction described by "prefix" and "domain".
+ *
+ * The values of the prefix schedule "prefix" are used as instances
+ * of the new group.  This means that validity schedule constraints
+ * between instances with the same prefix schedule value need to be removed.
+ * If "prefix" is zero-dimensional, then it does not contain any
+ * information about the domain.  Instead, those schedule constraints
+ * are removed that connect pairs of instances in "domain".
+ */
+static __isl_give isl_schedule_constraints *remove_group_validity(
+	__isl_take isl_schedule_constraints *sc,
+	__isl_keep isl_multi_union_pw_aff *prefix,
+	__isl_keep isl_union_set *domain)
+{
+	int n;
+	isl_union_map *validity, *joined;
+
+	validity = isl_schedule_constraints_get_validity(sc);
+	joined = isl_union_map_copy(validity);
+	n = isl_multi_union_pw_aff_dim(prefix, isl_dim_out);
+	if (n == 0) {
+		joined = isl_union_map_intersect_domain(joined,
+						isl_union_set_copy(domain));
+		joined = isl_union_map_intersect_range(joined,
+						isl_union_set_copy(domain));
+	} else {
+		joined = isl_union_map_eq_at_multi_union_pw_aff(joined,
+					isl_multi_union_pw_aff_copy(prefix));
+	}
+	validity = isl_union_map_subtract(validity, joined);
+	sc = isl_schedule_constraints_set_validity(sc, validity);
+	return sc;
+}
+
 /* Extend "grouping" with groups corresponding to merged
  * leaves in the list of potentially merged leaves "leaves".
  *
@@ -460,7 +499,8 @@ static isl_union_pw_multi_aff *group_contraction_from_prefix_and_domain(
  * of the instances sets of the original leaves that have been
  * merged into this element.  If at least two of the original leaves
  * have been merged into a given element, then add the corresponding
- * group to "grouping".
+ * group to "grouping" and remove validity schedule constraints
+ * between statement instances that get mapped to the same group instance.
  * In particular, the domain is extended with the statement instances
  * of the merged leaves, the contraction is extended with a mapping
  * of these statement instances to instances of a new group and
@@ -491,6 +531,8 @@ static isl_stat add_groups(struct ppcg_grouping *grouping,
 		schedule = schedule_from_domain_and_list(leaves[i].domain,
 							leaves[i].list);
 		upma = group_contraction_from_prefix_and_domain(grouping,
+					leaves[i].prefix, leaves[i].domain);
+		grouping->sc = remove_group_validity(grouping->sc,
 					leaves[i].prefix, leaves[i].domain);
 
 		domain = isl_union_set_copy(leaves[i].domain);
@@ -631,10 +673,10 @@ static void complete_grouping(struct ppcg_grouping *grouping)
 }
 
 /* Compute a schedule on the domain of "sc" that respects the schedule
- * constraints in "sc".
+ * constraints in "sc", after trying to combine groups of statements.
  *
- * "schedule" is a known correct schedule that is used to combine
- * groups of statements if options->group_chains is set.
+ * "schedule" is a known correct schedule that is used while combining
+ * groups of statements.
  * In particular, statements that are executed consecutively in a sequence
  * in this schedule and where all instances of the second depend on
  * the instance of the first that is executed in the same iteration
@@ -643,7 +685,7 @@ static void complete_grouping(struct ppcg_grouping *grouping)
  * and the resulting schedule is expanded again to refer to the original
  * statements.
  */
-__isl_give isl_schedule *ppcg_compute_schedule(
+__isl_give isl_schedule *ppcg_compute_grouping_schedule(
 	__isl_take isl_schedule_constraints *sc,
 	__isl_keep isl_schedule *schedule, struct ppcg_options *options)
 {
@@ -652,24 +694,21 @@ __isl_give isl_schedule *ppcg_compute_schedule(
 	isl_union_map *umap;
 	isl_schedule *res, *expansion;
 
-	if (!options->group_chains)
-		return isl_schedule_constraints_compute_schedule(sc);
-
 	grouping.group_id = 0;
 	if (isl_schedule_foreach_schedule_node_top_down(schedule,
 			&detect_groups, &grouping) < 0)
 		goto error;
 	if (!grouping.contraction) {
 		ppcg_grouping_clear(&grouping);
-		return isl_schedule_constraints_compute_schedule(sc);
+		return ppcg_compute_non_grouping_schedule(grouping.sc, options);
 	}
 	complete_grouping(&grouping);
 	contraction = isl_union_pw_multi_aff_copy(grouping.contraction);
 	umap = isl_union_map_from_union_pw_multi_aff(contraction);
 
-	sc = isl_schedule_constraints_apply(sc, umap);
+	sc = isl_schedule_constraints_apply(grouping.sc, umap);
 
-	res = isl_schedule_constraints_compute_schedule(sc);
+	res = ppcg_compute_non_grouping_schedule(sc, options);
 
 	contraction = isl_union_pw_multi_aff_copy(grouping.contraction);
 	expansion = isl_schedule_copy(grouping.schedule);
