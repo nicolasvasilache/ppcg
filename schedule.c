@@ -215,9 +215,6 @@ static __isl_give isl_schedule_node *band_set_permutable(
  * that are scheduled together by the ancestors of "node".
  * That is, select those coincidence constraints that relate
  * pairs of instances that have the same value for the prefix schedule.
- * If the schedule depth is zero, then the prefix schedule does not
- * contain any information, so we intersect domain and range
- * of the schedule constraints with the reaching domain elements instead.
  */
 static __isl_give isl_union_map *get_local_coincidence(
 	__isl_keep isl_schedule_node *node,
@@ -229,19 +226,6 @@ static __isl_give isl_union_map *get_local_coincidence(
 
 	coincidence = isl_schedule_constraints_get_coincidence(sc);
 	contraction = isl_schedule_node_get_subtree_contraction(node);
-	if (isl_schedule_node_get_schedule_depth(node) == 0) {
-		isl_union_set *domain;
-
-		domain = isl_schedule_node_get_domain(node);
-		domain = isl_union_set_preimage_union_pw_multi_aff(domain,
-						    contraction);
-		coincidence = isl_union_map_intersect_domain(coincidence,
-						    isl_union_set_copy(domain));
-		coincidence = isl_union_map_intersect_range(coincidence,
-						    domain);
-		return coincidence;
-	}
-
 	prefix = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(node);
 	prefix = isl_multi_union_pw_aff_pullback_union_pw_multi_aff(prefix,
 								contraction);
