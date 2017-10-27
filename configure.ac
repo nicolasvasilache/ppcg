@@ -1,4 +1,4 @@
-AC_INIT([ppcg], [0.06], [isl-development@googlegroups.com])
+AC_INIT([ppcg], [0.07], [isl-development@googlegroups.com])
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE([foreign])
@@ -64,7 +64,6 @@ AC_ARG_WITH([polybench],
 	])
 
 AX_DETECT_GIT_HEAD
-echo '#define GIT_HEAD_ID "'$GIT_HEAD_ID'"' > gitversion.h
 
 AC_CONFIG_FILES(Makefile)
 AC_CONFIG_FILES([polybench_test.sh], [chmod +x polybench_test.sh])

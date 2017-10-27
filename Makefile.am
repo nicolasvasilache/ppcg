@@ -50,6 +50,7 @@ ppcg_SOURCES = \
 	gpu_tree.c \
 	gpu_tree.h \
 	grouping.c \
+	grouping.h \
 	hybrid.c \
 	hybrid.h \
 	schedule.c \
@@ -128,7 +129,12 @@ TESTS = @extra_tests@
 EXTRA_TESTS = opencl_test.sh polybench_test.sh
 TEST_EXTENSIONS = .sh
 
+BUILT_SOURCES = gitversion.h
+
+CLEANFILES = gitversion.h
+
 EXTRA_DIST = \
+	examples \
 	ocl_utilities.c \
 	ocl_utilities.h \
 	tests
