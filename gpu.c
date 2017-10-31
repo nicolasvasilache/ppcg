@@ -618,16 +618,16 @@ static void read_block_sizes(struct ppcg_kernel *kernel,
 		kernel->n_block = 3;
 	switch (kernel->n_block) {
 	case 1:
-		kernel->block_dim[0] = 512;
+		kernel->block_dim[0] = 1; //512;
 		break;
 	case 2:
-		kernel->block_dim[0] = 32;
-		kernel->block_dim[1] = 16;
+		kernel->block_dim[0] = 1; //32;
+		kernel->block_dim[1] = 1; //16;
 		break;
 	default:
-		kernel->block_dim[0] = 32;
-		kernel->block_dim[1] = 4;
-		kernel->block_dim[2] = 4;
+		kernel->block_dim[0] = 1; //32;
+		kernel->block_dim[1] = 1; //4;
+		kernel->block_dim[2] = 1; //4;
 		break;
 	}
 
@@ -647,11 +647,11 @@ static void read_grid_sizes(struct ppcg_kernel *kernel,
 		kernel->n_grid = 2;
 	switch (kernel->n_grid) {
 	case 1:
-		kernel->grid_dim[0] = 32768;
+		kernel->grid_dim[0] = 1;//32768;
 		break;
 	default:
-		kernel->grid_dim[0] = 256;
-		kernel->grid_dim[1] = 256;
+		kernel->grid_dim[0] = 1; //256;
+		kernel->grid_dim[1] = 1; //256;
 		break;
 	}
 
@@ -664,7 +664,7 @@ static void read_grid_sizes(struct ppcg_kernel *kernel,
  * Store the extracted sizes in "kernel".
  * Add the effectively used sizes to gen->used_sizes.
  */
-static void read_grid_and_block_sizes(struct ppcg_kernel *kernel,
+void read_grid_and_block_sizes(struct ppcg_kernel *kernel,
 	struct gpu_gen *gen)
 {
 	read_block_sizes(kernel, gen->sizes);
@@ -690,6 +690,7 @@ static void *free_stmts(struct gpu_stmt *stmts, int n)
 			isl_id_free(access->ref_id);
 			isl_map_free(access->access);
 			isl_map_free(access->tagged_access);
+			isl_pw_aff_free(access->indirect_index_expr);
 			free(access);
 		}
 
@@ -860,7 +861,7 @@ static __isl_give isl_set *array_extent(struct gpu_array_info *array)
  * shared/private memory tile back to the access relation.
  * Constraints (2) are obtained from the (recomputed) extent.
  */
-static __isl_give isl_map *group_tile(struct gpu_array_ref_group *group)
+__isl_give isl_map *group_tile(struct gpu_array_ref_group *group)
 {
 	int i;
 	int n_index = group->array->n_index;
@@ -889,15 +890,47 @@ static __isl_give isl_map *group_tile(struct gpu_array_ref_group *group)
 	return tile;
 }
 
+struct find_pw_multi_aff_by_space_data {
+	isl_space *space;
+	isl_pw_multi_aff *pma;
+};
+
+static isl_stat find_pw_multi_aff_domain_space(__isl_take isl_pw_multi_aff *pma,
+	void *user)
+{
+	struct find_pw_multi_aff_by_space_data *data = user;
+	isl_space *space;
+	isl_bool r;
+
+	if (!data || !data->space)
+		goto error;
+
+	space = isl_pw_multi_aff_get_space(pma);
+	r = isl_space_tuple_is_equal(space, isl_dim_in,
+		data->space, isl_dim_set);
+	isl_space_free(space);
+	if (r < 0)
+		goto error;
+	if (r) {
+		if (data->pma)
+			goto error;
+		data->pma = pma;
+	} else {
+		isl_pw_multi_aff_free(pma);
+	}
+
+	return isl_stat_ok;
+
+error:
+	isl_pw_multi_aff_free(pma);
+	return isl_stat_error;
+}
+
 /* Given a mapping "iterator_map" from the AST schedule to a domain,
  * return the corresponding mapping from the AST schedule to
- * to the outer kernel->copy_schedule_dim dimensions of
- * the schedule computed by PPCG for this kernel.
- *
- * Note that kernel->copy_schedule_dim is at least as large as
- * the largest depth of any array reference group associated to the kernel.
- * This is needed as the returned schedule is used to extract a mapping
- * to the outer tile->depth dimensions in transform_index.
+ * to the outer D dimensions of the schedule computed by PPCG for this kernel,
+ * where D is the number of dimensions affecting the copy_schedule for the
+ * statement.
  */
 static __isl_give isl_pw_multi_aff *compute_sched_to_copy(
 	struct ppcg_kernel *kernel, __isl_take isl_pw_multi_aff *iterator_map)
@@ -907,13 +940,17 @@ static __isl_give isl_pw_multi_aff *compute_sched_to_copy(
 	isl_space *space;
 
 	space = isl_space_range(isl_pw_multi_aff_get_space(iterator_map));
-	space = isl_space_from_domain(space);
-	space = isl_space_add_dims(space, isl_dim_out,
-					kernel->copy_schedule_dim);
-
-	upma = isl_union_pw_multi_aff_copy(kernel->copy_schedule);
-	pma = isl_union_pw_multi_aff_extract_pw_multi_aff(upma, space);
-	isl_union_pw_multi_aff_free(upma);
+	struct find_pw_multi_aff_by_space_data data = { space, NULL };
+	if (isl_union_pw_multi_aff_foreach_pw_multi_aff(
+			kernel->copy_schedule,
+			&find_pw_multi_aff_domain_space,
+			&data) < 0) {
+		isl_pw_multi_aff_free(data.pma);
+		isl_space_free(space);
+		return isl_pw_multi_aff_free(iterator_map);
+	}
+	isl_space_free(space);
+	pma = data.pma;
 
 	return isl_pw_multi_aff_pullback_pw_multi_aff(pma, iterator_map);
 }
@@ -931,7 +968,7 @@ static __isl_give isl_pw_multi_aff *compute_sched_to_copy(
  * affect the decision on whether to place a reference group
  * in private, shared or global memory.
  */
-static void check_shared_memory_bound(struct ppcg_kernel *kernel)
+void check_shared_memory_bound(struct ppcg_kernel *kernel)
 {
 	int i, j;
 	isl_val *left, *size;
@@ -975,7 +1012,7 @@ static void check_shared_memory_bound(struct ppcg_kernel *kernel)
  * that is not mapped to private or shared memory as
  * accessing the corresponding global device memory.
  */
-static void mark_global_arrays(struct ppcg_kernel *kernel)
+void mark_global_arrays(struct ppcg_kernel *kernel)
 {
 	int i, j;
 
@@ -997,7 +1034,7 @@ static void mark_global_arrays(struct ppcg_kernel *kernel)
 
 /* Compute a tiling for all the array reference groups in "kernel".
  */
-static void compute_group_tilings(struct ppcg_kernel *kernel)
+void compute_group_tilings(struct ppcg_kernel *kernel)
 {
 	int i, j;
 
@@ -1028,7 +1065,7 @@ static void compute_group_tilings(struct ppcg_kernel *kernel)
  * Then, for each block dimension, we compute the maximal value of the block id
  * and add one.
  */
-static __isl_give isl_multi_pw_aff *extract_grid_size(
+__isl_give isl_multi_pw_aff *extract_grid_size(
 	struct ppcg_kernel *kernel, __isl_take isl_union_set *domain)
 {
 	int i;
@@ -1194,7 +1231,7 @@ struct ppcg_kernel *ppcg_kernel_free(struct ppcg_kernel *kernel)
 
 /* Wrapper around ppcg_kernel_free for use as a isl_id_set_free_user callback.
  */
-static void ppcg_kernel_free_wrap(void *user)
+void ppcg_kernel_free_wrap(void *user)
 {
 	struct ppcg_kernel *kernel = user;
 
@@ -1225,7 +1262,7 @@ static void create_kernel_var(isl_ctx *ctx, struct gpu_array_ref_group *group,
 					    isl_val_copy(tile->bound[j].size));
 }
 
-static int create_kernel_vars(struct ppcg_kernel *kernel)
+int create_kernel_vars(struct ppcg_kernel *kernel)
 {
 	int i, j, n;
 
@@ -1297,7 +1334,7 @@ static __isl_give isl_pw_aff *set_universally_zero(__isl_take isl_pw_aff *pa)
  * function.  Since the access function cannot actually access anything,
  * there is no harm in printing the array sizes as zero.
  */
-static void localize_bounds(struct ppcg_kernel *kernel,
+void localize_bounds(struct ppcg_kernel *kernel,
 	__isl_keep isl_set *host_domain)
 {
 	int i, j;
@@ -1343,7 +1380,7 @@ static void localize_bounds(struct ppcg_kernel *kernel,
  * Initialize the "array" field of each local array to point
  * to the corresponding array in "prog".
  */
-static struct ppcg_kernel *ppcg_kernel_create_local_arrays(
+struct ppcg_kernel *ppcg_kernel_create_local_arrays(
 	struct ppcg_kernel *kernel, struct gpu_prog *prog)
 {
 	int i;
@@ -1444,9 +1481,9 @@ static int find_array_index(struct ppcg_kernel *kernel, const char *name)
  * "accesses" is the list of gpu_stmt_access in the statement.
  * "iterator_map" expresses the statement iterators in terms of
  * the AST loop iterators.
- * "sched2copy" expresses the outer copy_schedule_dim dimensions of
- * the kernel schedule in terms of the AST loop iterators and
- * may be NULL if we are not inside a kernel.
+ * "sched2copy" expresses the outer dimensions of the kernel schedule that
+ * affect the copy in terms of the AST loop iterators and may be NULL if we are
+ * not inside a kernel.
  *
  * The following fields are set in transform_index and used in transform_expr.
  * "array" is the array that is being accessed.
@@ -1497,7 +1534,7 @@ static struct gpu_array_ref_group *find_ref_group(
  *
  * apply the tiling to the outer array in the index expression to obtain
  *
- *	L -> T(A)
+ *	L -> F(T)
  *
  * If F(A) is some subfield of A, then separate the member access
  * into the base index expression and the field index expression,
@@ -1512,9 +1549,24 @@ static struct gpu_array_ref_group *find_ref_group(
  * in terms of the AST loop iterators
  *
  *	L -> T
+ *
+ * If the index expression "index" corresponds to an indirect access and thus
+ * has the form
+ *
+ * 	[[L -> I] -> TI] -> F(A)
+ *
+ * additionally plug indrection expressions "indirection_orig" and
+ * "indirection_tiled", which have the shapes
+ *
+ * 	[L -> I]
+ * 	[L -> TI]
+ *
+ * into the domain of the index expression. 
  */
 static __isl_give isl_multi_pw_aff *tile_outer(
-	__isl_take isl_multi_pw_aff *index, __isl_take isl_multi_pw_aff *tiling)
+	__isl_take isl_multi_pw_aff *index, __isl_take isl_multi_pw_aff *tiling,
+	__isl_take isl_multi_pw_aff *indirection_orig,
+	__isl_take isl_multi_pw_aff *indirection_tiled)
 {
 	isl_bool is_wrapping;
 	isl_space *space;
@@ -1529,13 +1581,23 @@ static __isl_give isl_multi_pw_aff *tile_outer(
 		field = isl_multi_pw_aff_copy(index);
 		field = isl_multi_pw_aff_range_factor_range(field);
 		index = isl_multi_pw_aff_range_factor_domain(index);
-		index = tile_outer(index, tiling);
+		indirection_orig = isl_multi_pw_aff_range_factor_domain(
+			indirection_orig);
+		indirection_tiled = isl_multi_pw_aff_range_factor_domain(
+			indirection_tiled);
+		index = tile_outer(index, tiling, indirection_orig,
+			indirection_tiled);
 		return isl_multi_pw_aff_range_product(index, field);
 	}
 
 	space = isl_space_domain(isl_multi_pw_aff_get_space(index));
 	space = isl_space_map_from_set(space);
 	mpa = isl_multi_pw_aff_identity(space);
+	if (indirection_orig && indirection_tiled) {
+		mpa = isl_multi_pw_aff_range_product(mpa, indirection_orig);
+		mpa = isl_multi_pw_aff_range_product(mpa, indirection_tiled);
+	}
+
 	index = isl_multi_pw_aff_range_product(mpa, index);
 	index = isl_multi_pw_aff_pullback_multi_pw_aff(tiling, index);
 
@@ -1544,6 +1606,105 @@ error:
 	isl_multi_pw_aff_free(index);
 	isl_multi_pw_aff_free(tiling);
 	return NULL;
+}
+
+/* Check if the array reference group "group" includes indirect subscripts.
+ *
+ * Since such accesses should not have been grouped, we check that there is
+ * only one access in the group, and that it has an indirection.
+ */
+static inline int group_has_indirection(struct gpu_array_ref_group *group) {
+	return group->n_ref == 1 && group->refs[0]->indirection;
+}
+
+/* Transform the tiling of the array reference "group" group contained in its
+ * tile "tile" so that it is defined over the AST loop iterators.
+ *
+ * The tiling is of the following form for directly and indirectly accessed
+ * groups, respectively.
+ *
+ * 	[D -> A] -> TA
+ * 	[[[D -> I] -> TI] -> A] -> TA
+ *
+ * where D corresponds to the outer tile->depth dimensions of the kernel
+ * schedule, I corresponds to index array subscripts, TI corresponds to the
+ * tiled index array subscripts, A corresponds to the global array subscripts
+ * and TA corresponds to the tiled global array subscripts; the indirect access
+ * is expected to be of the shape A[I[...]];
+ *
+ * The copy schedule provided in "sched2copy" is used to compute the
+ *
+ * 	L -> D
+ *
+ * mapping, which is precmoposed with the tiling to obtain
+ *
+ * 	[L -> A] -> TA
+ * 	[[[L -> I] -> TI] -> A] -> TA
+ *
+ * for direct and indirect accesses, respectively.
+ */
+static __isl_give isl_multi_pw_aff *localize_tiling(
+	struct gpu_array_ref_group *group,
+	struct gpu_array_tile *tile,
+	__isl_keep isl_pw_multi_aff *sched2copy)
+{
+	int dim;
+	isl_space *space;
+	isl_multi_pw_aff *tiling;
+	isl_pw_multi_aff *pma;
+	isl_pw_multi_aff *sched2depth;
+	isl_space *indirection_space;
+	int has_indirection;
+
+	has_indirection = group_has_indirection(group);
+
+	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));
+
+	if (has_indirection) {
+		indirection_space = isl_space_copy(space);
+		indirection_space = isl_space_unwrap(indirection_space);
+		indirection_space = isl_space_domain(indirection_space);
+		indirection_space = isl_space_unwrap(indirection_space);
+		indirection_space = isl_space_curry(indirection_space);
+		indirection_space = isl_space_range(indirection_space);
+	}
+
+	space = isl_space_range(isl_space_unwrap(space));
+	space = isl_space_map_from_set(space);
+	pma = isl_pw_multi_aff_identity(space);
+	sched2depth = isl_pw_multi_aff_copy(sched2copy);
+	dim = isl_pw_multi_aff_dim(sched2depth, isl_dim_out);
+	sched2depth = isl_pw_multi_aff_drop_dims(sched2depth, isl_dim_out,
+					    tile->depth, dim - tile->depth);
+
+	if (has_indirection) {
+		isl_space *s;
+		isl_pw_multi_aff *ipma;
+
+		s = isl_space_copy(indirection_space);
+		s = isl_space_unwrap(s);
+		s = isl_space_domain(s);
+		s = isl_space_map_from_set(s);
+
+		ipma = isl_pw_multi_aff_identity(s);
+		sched2depth = isl_pw_multi_aff_product(sched2depth, ipma);
+
+		s = indirection_space;
+		s = isl_space_unwrap(s);
+		s = isl_space_range(s);
+		s = isl_space_map_from_set(s);
+
+		ipma = isl_pw_multi_aff_identity(s);
+		sched2depth = isl_pw_multi_aff_product(sched2depth, ipma);
+	}
+
+	pma = isl_pw_multi_aff_product(sched2depth, pma);
+	tiling = isl_multi_pw_aff_from_multi_aff(
+				    isl_multi_aff_copy(tile->tiling));
+
+	tiling = isl_multi_pw_aff_pullback_pw_multi_aff(tiling, pma);
+
+	return tiling;
 }
 
 /* Index transformation callback for pet_stmt_build_ast_exprs.
@@ -1561,25 +1722,30 @@ error:
  * If no reference groups have been computed for the array,
  * then we can only be accessing the global array.
  *
- * Otherwise, we apply the tiling to the index.
- * This tiling is of the form
+ * Otherwise, we apply the tiling to the index to obtain
  *
- *	[D -> A] -> T
+ * 	[L -> A] -> TA
+ * 
+ * or
  *
- * where D corresponds to the outer tile->depth dimensions of
- * the kernel schedule.
- * The index is of the form
+ * 	[[[L -> I] -> TI] -> A] -> TA
  *
- *	L -> A
- *
- * We update the tiling to refer to the AST loop iterators
- *
- *	[L -> A] -> T
- *
+ * for indirectly accessed arrays, where (TI) I stands for (tiled) index array.
  * and combine it with the index to obtain a tiled index expression in terms
  * of the AST loop iterators
  *
- *	L -> T
+ *	L -> TA
+ *
+ * or
+ *
+ * 	[[L -> I] -> TI] -> TA
+ *
+ * For indirect arrays, we recursively transform the index of the inner array
+ * to first obtain
+ *
+ * 	L -> TI
+ *
+ * necessary for tiling.
  *
  * Note that while the tiling applies directly to an outer array.
  * the index may refer to some subfield of this outer array.
@@ -1638,20 +1804,29 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	if (!tile)
 		return index;
 
-	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));
-	space = isl_space_range(isl_space_unwrap(space));
-	space = isl_space_map_from_set(space);
-	pma = isl_pw_multi_aff_identity(space);
-	sched2depth = isl_pw_multi_aff_copy(data->sched2copy);
-	dim = isl_pw_multi_aff_dim(sched2depth, isl_dim_out);
-	sched2depth = isl_pw_multi_aff_drop_dims(sched2depth, isl_dim_out,
-					    tile->depth, dim - tile->depth);
-	pma = isl_pw_multi_aff_product(sched2depth, pma);
-	tiling = isl_multi_pw_aff_from_multi_aff(
-				    isl_multi_aff_copy(tile->tiling));
-	tiling = isl_multi_pw_aff_pullback_pw_multi_aff(tiling, pma);
+	tiling = localize_tiling(group, tile, data->sched2copy);
+	if (!tiling)
+		return isl_multi_pw_aff_free(index);
 
-	index = tile_outer(index, tiling);
+	if (group_has_indirection(group)) {
+		struct gpu_stmt_access *index_access =
+			group->refs[0]->indirection;
+
+		isl_pw_multi_aff *apma = isl_pw_multi_aff_from_map(
+			isl_map_copy(index_access->access));
+		isl_multi_pw_aff *ampa = isl_multi_pw_aff_from_pw_multi_aff(
+			apma);
+
+		isl_multi_pw_aff *ampa2 = isl_multi_pw_aff_copy(ampa);
+		iterator_map = isl_pw_multi_aff_copy(data->iterator_map);
+		ampa2 = isl_multi_pw_aff_pullback_pw_multi_aff(ampa2, iterator_map);
+
+		ampa = transform_index(ampa, index_access->ref_id, data);
+
+		index = tile_outer(index, tiling, ampa2, ampa);
+	} else {
+		index = tile_outer(index, tiling, NULL, NULL);
+	}
 
 	return index;
 }
@@ -1830,8 +2005,8 @@ static __isl_give isl_ast_expr *transform_expr(__isl_take isl_ast_expr *expr,
  * These AST expressions are computed from iterator_map,
  * which expresses the domain
  * elements in terms of the generated loops, and sched2copy,
- * which expresses the outer copy_schedule_dim dimensions of
- * the kernel schedule computed by PPCG in terms of the generated loops.
+ * which expresses the outer dimensions of the kernel schedule that affect the
+ * copy, computed by PPCG in terms of the generated loops.
  */
 static __isl_give isl_ast_node *create_domain_leaf(
 	struct ppcg_kernel *kernel, __isl_take isl_ast_node *node,
@@ -1880,6 +2055,150 @@ static __isl_give isl_ast_node *create_domain_leaf(
 	id = isl_id_alloc(ctx, "user", stmt);
 	id = isl_id_set_free_user(id, &ppcg_kernel_stmt_free);
 	return isl_ast_node_set_annotation(node, id);
+}
+
+/* Find an array reference group that contains an reference identified by
+ * "ref_id" in a given GPU kernel "kernel".
+ * 
+ * Return NULL if not found.
+ */
+static struct gpu_array_ref_group *find_group_by_id(struct ppcg_kernel *kernel,
+	__isl_keep isl_id *ref_id)
+{
+	int i, j, k;
+	struct gpu_local_array_info *array;
+	struct gpu_array_ref_group *group;
+
+	for (i = 0; i < kernel->n_array; ++i) {
+		array = &kernel->array[i];
+		for (j = 0; j < array->n_group; ++j) {
+			group = array->groups[j];
+			for (k = 0; k < group->n_ref; ++k) {
+				if (group->refs[j]->ref_id == ref_id) {
+					return group;
+				}
+			}
+		}
+	}
+	return NULL;
+}
+
+/* Create an AST expression that corresponds to the indirect access subscript
+ * in the "build" context given the "tiling" of the index array of the form
+ *
+ *	[D -> I] -> TI
+ *
+ * and the original subscript connected to AST iterators L of the form
+ *
+ * 	L -> [D -> I]
+ * 
+ * we need to obtain the mapping from AST iterators to tiled index array
+ * subscripts of the form
+ *
+ * 	L -> TI
+ *
+ * First, we extract the mapping from AST iterators to untiled index array
+ * subcsripts from "ind_access". It has the form
+ *
+ * 	L -> I
+ *
+ * Then, we obtain the mapping between the global and tiled idnex array
+ * subscripts from the tiling function and compose it with the previous
+ * mapping. Note that we need to convert it to a map because
+ * map_factor_range behaves differently from multi_aff_factor_range: only the
+ * former allows us to properly obtain
+ *
+ * 	I -> TI
+ *
+ * from
+ *
+ * 	[D -> I] -> [D -> TI]
+ *
+ * without losing the relation imposed by equality of D's.
+ */
+static __isl_give isl_ast_expr *create_inner_expr(
+	__isl_keep isl_ast_build *build, __isl_take isl_multi_aff *tiling,
+	__isl_take isl_map *ind_access)
+{
+	isl_pw_multi_aff *ind_pma;
+	isl_pw_multi_aff *ind_pma2;
+	isl_space *ind_space;
+	isl_map *tiling_map;
+	isl_space *tiling_space;
+	isl_multi_aff *tiling2sched;
+
+	ind_space = isl_space_range(isl_map_get_space(ind_access));
+	ind_space = isl_space_unwrap(ind_space);
+	ind_pma = isl_pw_multi_aff_from_map(ind_access);
+	ind_space = isl_space_range(
+		isl_pw_multi_aff_get_space(ind_pma));
+	ind_space = isl_space_unwrap(ind_space);
+	ind_pma2 = isl_pw_multi_aff_range_map(ind_space);
+	ind_pma2 = isl_pw_multi_aff_pullback_pw_multi_aff(ind_pma2,
+		ind_pma);
+
+	tiling_space = isl_multi_aff_get_space(tiling);
+	tiling_space = isl_space_domain(tiling_space);
+	tiling_space = isl_space_unwrap(tiling_space);
+	tiling2sched = isl_multi_aff_domain_map(tiling_space);
+	tiling = isl_multi_aff_range_product(tiling2sched, tiling);
+
+	tiling_map = isl_map_from_multi_aff(tiling);
+	tiling_map = isl_map_factor_range(tiling_map);
+	ind_pma2 = isl_pw_multi_aff_pullback_pw_multi_aff(
+		isl_pw_multi_aff_from_map(tiling_map), ind_pma2);
+
+	return isl_ast_build_access_from_pw_multi_aff(build, ind_pma2);
+}
+
+/* Given an AST expression "expr" that corresponds to an indirect access to a
+ * global array accessed by "group" in "kernel", replace the indirect subscript
+ * in the expression with another AST expression that corresponds to the
+ * shared-memory materialization of the index array.
+ *
+ * Only shared memory promotion is supported.
+ * The group is expected to have only one reference (no grouping for indirectly
+ * accessed array) and be read-only.
+ *
+ * The schedule in "build" is of the form
+ *
+ * 	read[[[D -> I] -> TI] -> A] -> L
+ *
+ * where I is the original index array and TI its materialization in the shared
+ * memory. I and TI are not related in the expression and indirection is still
+ * expressed in terms of I. Therefore, we extract the original indirect
+ * subscript
+ *
+ *	L -> [D -> I]
+ *
+ * before combining it with the tiling of the indirect access to obtain the
+ * AST expression.
+ *
+ * FIXME: check support for affine expressions around the indirect access, i.e.
+ * A[j + I[k]].
+ */
+static isl_ast_expr *replace_indirect_subscript(__isl_take isl_ast_expr *expr,
+		__isl_keep isl_ast_build *build,
+		struct ppcg_kernel *kernel,
+		struct gpu_array_ref_group *group)
+{
+	isl_map *ind_access;
+	isl_ast_expr *ind_expr;
+	struct gpu_array_ref_group *ind_group;
+	
+	ind_access = isl_map_from_union_map(isl_ast_build_get_schedule(build));
+	ind_access = isl_map_reverse(ind_access);
+	ind_access = isl_map_range_factor_domain(ind_access);
+	ind_access = isl_map_range_factor_domain(ind_access);
+
+	ind_group = find_group_by_id(kernel,
+		group->refs[0]->indirection->ref_id);
+	ind_expr = create_inner_expr(build,
+		isl_multi_aff_copy(ind_group->shared_tile->tiling),
+		ind_access);
+	expr = isl_ast_expr_set_op_arg(expr,
+		group->refs[0]->indirect_index + 1, ind_expr);
+	return expr;
 }
 
 /* This function is called for each statement node in the AST
@@ -1946,6 +2265,10 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 	pma2 = isl_pw_multi_aff_pullback_pw_multi_aff(pma2,
 						    isl_pw_multi_aff_copy(pma));
 	expr = isl_ast_build_access_from_pw_multi_aff(build, pma2);
+
+	if (group_has_indirection(group))
+		expr = replace_indirect_subscript(expr, build, kernel, group);
+
 	if (group->array->linearize)
 		expr = gpu_local_array_info_linearize_index(group->local_array,
 							    expr);
@@ -2582,7 +2905,7 @@ static int is_candidate(__isl_keep isl_schedule_node *node)
  * If there are no such nodes in the subtree at "node" and
  * if "node" is not a filter node, then it is accepted too.
  */
-static int is_outer_tilable(__isl_keep isl_schedule_node *node)
+int is_outer_tilable(__isl_keep isl_schedule_node *node)
 {
 	int tilable;
 	isl_schedule_node *ancestor;
@@ -2750,7 +3073,7 @@ static __isl_give isl_multi_val *construct_band_tiles_sizes(
  * The list that "factor" points to is assumed to contain at least
  * as many elements as the number of members in the band.
  */
-static __isl_give isl_schedule_node *snap_band_to_sizes(
+__isl_give isl_schedule_node *snap_band_to_sizes(
 	__isl_take isl_schedule_node *node, int *factor,
 	struct ppcg_options *options)
 {
@@ -2775,7 +3098,7 @@ static __isl_give isl_schedule_node *snap_band_to_sizes(
  * Similarly, since the point loops will be mapped to thread ids,
  * we forcibly shift the point loops so that they start at zero.
  */
-static __isl_give isl_schedule_node *tile_band(
+__isl_give isl_schedule_node *tile_band(
 	__isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes)
 {
 	isl_ctx *ctx = isl_schedule_node_get_ctx(node);
@@ -2801,7 +3124,7 @@ static __isl_give isl_schedule_node *tile_band(
  * Intersect the set of parameter values derived from the host schedule
  * relation with the context of "prog".
  */
-static __isl_give isl_set *extract_context(__isl_keep isl_schedule_node *node,
+__isl_give isl_set *extract_context(__isl_keep isl_schedule_node *node,
 	struct gpu_prog *prog)
 {
 	isl_union_map *schedule;
@@ -2840,7 +3163,7 @@ static __isl_give isl_set *extract_context(__isl_keep isl_schedule_node *node,
  * The instances in "domain" are those that appear
  * in the domains of the access relations in "prog".
  */
-static __isl_give isl_union_set *accessed_by_domain(
+__isl_give isl_union_set *accessed_by_domain(
 	__isl_take isl_union_set *domain, struct gpu_prog *prog)
 {
 	isl_union_map *access;
@@ -2859,7 +3182,7 @@ static __isl_give isl_union_set *accessed_by_domain(
 /* Return the number of outer band members of the band node "node"
  * that are marked coincident.
  */
-static int n_outer_coincidence(__isl_keep isl_schedule_node *node)
+int n_outer_coincidence(__isl_keep isl_schedule_node *node)
 {
 	int i, n;
 
@@ -2875,7 +3198,7 @@ static int n_outer_coincidence(__isl_keep isl_schedule_node *node)
 /* If the band node "node" has more than "n" members, then split off
  * the first "n" of them.
  */
-static __isl_give isl_schedule_node *split_band(
+__isl_give isl_schedule_node *split_band(
 	__isl_take isl_schedule_node *node, int n)
 {
 	int dim;
@@ -2896,7 +3219,7 @@ static __isl_give isl_schedule_node *split_band(
  * elements in "sizes", then some splitting has occurred and we split
  * "sizes" in the same way.
  */
-static __isl_give isl_schedule_node *scale_band(
+__isl_give isl_schedule_node *scale_band(
 	__isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes)
 {
 	int n, dim;
@@ -2976,7 +3299,7 @@ static __isl_give isl_multi_aff *parameter_vector(__isl_take isl_space *space,
  * than or equal to this number.  If it is smaller, then the first
  * elements of "names" are equated to zero.
  */
-static __isl_give isl_union_set *set_schedule_modulo(
+__isl_give isl_union_set *set_schedule_modulo(
 	__isl_keep isl_schedule_node *node, __isl_keep isl_id_list *names,
 	int *size)
 {
@@ -3026,7 +3349,7 @@ static __isl_give isl_union_set *set_schedule_modulo(
  * in the schedule tree to ensure that those bounds hold at "node".
  * This guard is inserted in insert_guard.
  */
-static __isl_give isl_schedule_node *insert_context(struct ppcg_kernel *kernel,
+__isl_give isl_schedule_node *insert_context(struct ppcg_kernel *kernel,
 	__isl_take isl_schedule_node *node)
 {
 	isl_set *context;
@@ -3056,7 +3379,7 @@ static __isl_give isl_schedule_node *insert_context(struct ppcg_kernel *kernel,
  * for each executed instance ("context"), as long as this does not result
  * in a disjunction.
  */
-static __isl_give isl_schedule_node *insert_guard(
+__isl_give isl_schedule_node *insert_guard(
 	__isl_take isl_schedule_node *node, __isl_keep isl_set *context,
 	__isl_keep isl_multi_pw_aff *size, struct ppcg_scop *scop)
 {
@@ -3132,7 +3455,7 @@ static __isl_give isl_schedule_node *unroll(__isl_take isl_schedule_node *node)
  * If the shared and the thread mark point to the same node, then make
  * sure the synchronization is inserted outside of the shared mark.
  */
-static __isl_give isl_schedule_node *add_sync(struct ppcg_kernel *kernel,
+__isl_give isl_schedule_node *add_sync(struct ppcg_kernel *kernel,
 	__isl_take isl_schedule_node *node)
 {
 	int depth;
@@ -3168,9 +3491,9 @@ static __isl_give isl_schedule_node *add_sync(struct ppcg_kernel *kernel,
  *
  * with D the outer schedule dimensions at "node".
  */
-static __isl_give isl_union_map *anchored_non_local_accesses(
+__isl_give isl_union_map *anchored_non_local_accesses(
 	struct ppcg_kernel *kernel, struct gpu_array_ref_group *group,
-	__isl_take isl_schedule_node *node, int read)
+	__isl_keep isl_schedule_node *node, int read)
 {
 	isl_union_map *access;
 	isl_union_map *prefix;
@@ -3230,7 +3553,7 @@ static __isl_give isl_multi_aff *create_from_access(isl_ctx *ctx,
  * the next copy into shared memory because each element of
  * the shared memory tile is always copied by the same thread.
  */
-static __isl_give isl_schedule_node *add_group_write_sync(
+__isl_give isl_schedule_node *add_group_write_sync(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel,
 	struct gpu_array_ref_group *group, int shared)
 {
@@ -3303,7 +3626,7 @@ static __isl_give isl_schedule_node *add_group_write_sync(
  * in the schedule tree depending on where the corresponding reads
  * from global memory are performed.
  */
-static __isl_give isl_schedule_node *add_copies_group_private(
+__isl_give isl_schedule_node *add_copies_group_private(
 	struct ppcg_kernel *kernel, struct gpu_array_ref_group *group,
 	__isl_take isl_schedule_node *node, int read)
 {
@@ -3587,7 +3910,7 @@ static __isl_give isl_schedule_node *add_copies_group(
  * On input, "node" points to the kernel node, and it is moved
  * back there on output.
  */
-static __isl_give isl_schedule_node *add_copies(struct ppcg_kernel *kernel,
+__isl_give isl_schedule_node *add_copies(struct ppcg_kernel *kernel,
 	__isl_take isl_schedule_node *node)
 {
 	int i, j;
@@ -3621,8 +3944,7 @@ static __isl_give isl_schedule_node *atomic(__isl_take isl_schedule_node *node)
  * Do the same for all ancestors.
  * Return a pointer to "node" (in the updated schedule tree).
  */
-static __isl_give isl_schedule_node *atomic_ancestors(
-	__isl_take isl_schedule_node *node)
+__isl_give isl_schedule_node *atomic_ancestors(__isl_take isl_schedule_node *node)
 {
 	int pos;
 
@@ -3676,8 +3998,8 @@ static __isl_give isl_schedule_node *atomic_ancestors(
  * Sychronization is needed after writes to global memory
  * through these references.
  */
-static __isl_give isl_union_set *compute_sync_writes(
-	struct ppcg_kernel *kernel, __isl_keep isl_schedule_node *node)
+__isl_give isl_union_set *compute_sync_writes(
+  struct ppcg_kernel *kernel, __isl_keep isl_schedule_node *node)
 {
 	isl_union_map *local;
 	isl_union_map *may_writes, *shared_access;
@@ -3731,7 +4053,7 @@ static __isl_give isl_union_set *compute_sync_writes(
 /* Group the domain elements into a single space, named kernelX,
  * with X the kernel sequence number "kernel_id".
  */
-static __isl_give isl_schedule_node *group_statements(
+__isl_give isl_schedule_node *group_statements(
 	__isl_take isl_schedule_node *node, int kernel_id)
 {
 	char buffer[20];
@@ -3926,7 +4248,6 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	}
 
 	node = gpu_tree_move_up_to_thread(node);
-	kernel->copy_schedule_dim = isl_schedule_node_get_schedule_depth(node);
 	kernel->copy_schedule =
 		isl_schedule_node_get_prefix_schedule_union_pw_multi_aff(node);
 	contraction = isl_union_pw_multi_aff_copy(kernel->contraction);
@@ -4042,6 +4363,21 @@ static __isl_give isl_schedule_node *try_hybrid_tile(struct gpu_gen *gen,
 	return node;
 }
 
+__isl_give isl_schedule_node* mark_thread(
+  __isl_take isl_schedule_node *node, void *user) {
+  	struct gpu_gen *gen = user;
+	isl_id *id;
+        if (gen->options->callbacks &&
+            gen->options->callbacks->mark_thread_callback)
+        {
+          return gen->options->callbacks->mark_thread_callback(node, user);
+        }
+	id = isl_id_alloc(gen->ctx, "thread", NULL);
+	node = isl_schedule_node_insert_mark(node, id);
+	node = isl_schedule_node_parent(node);
+        return node;
+}
+
 /* If "node" is the outermost permutable band that can be mapped to block and
  * thread identifiers in its branch (or the root of a subtree with
  * no such outer bands),
@@ -4073,7 +4409,6 @@ static __isl_give isl_schedule_node *mark_outer_permutable(
 	int scale;
 	int tile_len;
 	int *tile_size;
-	isl_id *id;
 	isl_multi_val *sizes;
 
 	outer = is_outer_tilable(node);
@@ -4101,16 +4436,29 @@ static __isl_give isl_schedule_node *mark_outer_permutable(
 	if (tile_len < isl_schedule_node_band_n_member(node))
 		node = isl_schedule_node_band_split(node, tile_len);
 	sizes = construct_band_tiles_sizes(node, tile_size);
+
 	node = tile_band(node, isl_multi_val_copy(sizes));
+
 	node = isl_schedule_node_child(node, 0);
+
 	if (gen->options->unroll_gpu_tile)
 		node = ppcg_set_schedule_node_type(node, isl_ast_loop_unroll);
-	id = isl_id_alloc(gen->ctx, "thread", NULL);
-	node = isl_schedule_node_insert_mark(node, id);
-	node = isl_schedule_node_parent(node);
+
+	// id = isl_id_alloc(gen->ctx, "thread", NULL);
+	// node = isl_schedule_node_insert_mark(node, id);
+	// node = isl_schedule_node_parent(node);
+        node = mark_thread(node, user);
 
 	scale = gen->options->scale_tile_loops;
-	node = gpu_create_kernel(gen, node, scale, sizes);
+
+        if (gen->generate_kernel)
+        {
+          node = gen->generate_kernel(gen, node, scale, sizes,
+		gen->generate_kernel_user);
+        } else {
+          node = gpu_create_kernel(gen, node, scale, sizes);
+        }
+
 	isl_multi_val_free(sizes);
 	free(tile_size);
 
@@ -4395,6 +4743,16 @@ static __isl_give isl_schedule *compute_schedule(struct gpu_gen *gen)
 	isl_schedule *schedule;
 
 	sc = construct_schedule_constraints(gen->prog);
+	if (gen->add_schedule_constraints)
+		sc = isl_schedule_constraints_set_custom_constraint_callback(sc,
+			gen->add_schedule_constraints,
+			gen->add_schedule_constraints_user);
+
+	if (gen->merge_callback) {
+		sc = isl_schedule_constraints_set_merge_callback(sc,
+			gen->merge_callback, gen->merge_callback_user);
+	}
+
 	schedule = gen->prog->scop->schedule;
 	schedule = ppcg_compute_schedule(sc, schedule, gen->options);
 
@@ -5150,6 +5508,9 @@ static __isl_give isl_schedule *map_to_device(struct gpu_gen *gen,
 	isl_union_map *prefix;
 	isl_union_pw_multi_aff *contraction;
 	struct gpu_prog *prog;
+	int transform_on_host;
+
+	transform_on_host = gen->options->print_host_code;
 
 	context = isl_set_copy(gen->prog->context);
 	context = isl_set_from_params(context);
@@ -5164,22 +5525,27 @@ static __isl_give isl_schedule *map_to_device(struct gpu_gen *gen,
 	isl_schedule_free(schedule);
 	node = isl_schedule_node_child(node, 0);
 	node = isl_schedule_node_child(node, 0);
-	node = isolate_permutable_subtrees(node, gen->prog);
-	domain = isl_schedule_node_get_domain(node);
-	contraction = isl_schedule_node_get_subtree_contraction(node);
-	domain = isl_union_set_preimage_union_pw_multi_aff(domain,
-				    isl_union_pw_multi_aff_copy(contraction));
-	prefix = isl_schedule_node_get_prefix_schedule_union_map(node);
-	prefix = isl_union_map_preimage_domain_union_pw_multi_aff(prefix,
-				    contraction);
+	if (transform_on_host) {
+		node = isolate_permutable_subtrees(node, gen->prog);
+		domain = isl_schedule_node_get_domain(node);
+		contraction = isl_schedule_node_get_subtree_contraction(node);
+		domain = isl_union_set_preimage_union_pw_multi_aff(domain,
+			isl_union_pw_multi_aff_copy(contraction));
+		prefix = isl_schedule_node_get_prefix_schedule_union_map(node);
+		prefix = isl_union_map_preimage_domain_union_pw_multi_aff(
+			prefix, contraction);
+	}
 	node = mark_kernels(gen, node);
-	node = add_to_from_device(node, domain, prefix, gen->prog);
+	if (transform_on_host)
+		node = add_to_from_device(node, domain, prefix, gen->prog);
 	node = isl_schedule_node_root(node);
 	node = isl_schedule_node_child(node, 0);
 	node = isl_schedule_node_child(node, 0);
 	node = isl_schedule_node_insert_guard(node, guard);
 	node = isl_schedule_node_child(node, 0);
-	node = add_init_clear_device(node);
+
+	if (transform_on_host)
+		node = add_init_clear_device(node);
 	schedule = isl_schedule_node_get_schedule(node);
 	isl_schedule_node_free(node);
 
@@ -5192,11 +5558,13 @@ static __isl_give isl_schedule *map_to_device(struct gpu_gen *gen,
  * "single_expression" is set if the access expressions belong to
  * an expression statement (i.e., a statement without internal control).
  * "any_to_outer" maps all intermediate arrays to their outer arrays.
+ * "stmt" is the statement, for which the access data is extracted.
  */
 struct ppcg_extract_access_data {
 	struct gpu_stmt_access **next_access;
 	int single_expression;
 	isl_union_map *any_to_outer;
+	struct gpu_stmt *stmt;
 };
 
 /* Given a tagged access relation to a single array "tagged", extract it
@@ -5323,6 +5691,144 @@ static isl_bool accesses_fixed_element(__isl_keep pet_expr *expr)
 	return fixed;
 }
 
+/* For piecewise aff with defined over a wrapped domain, check whether its
+ * expression depends on the dimensions of the range of the wrapped domain.
+ *
+ * In particular, given a pw_aff living in
+ *
+ * [A -> B] -> c
+ *
+ * check whether c involves any dimension from B.
+ */
+static isl_bool pw_aff_is_arg_dependent(__isl_keep isl_pw_aff *pa) {
+	isl_space *space;
+	int arg_start;
+	int n_arg;
+
+	if (!pa)
+		return isl_bool_error;
+
+	space = isl_pw_aff_get_space(pa);
+	space = isl_space_domain(space);
+	space = isl_space_unwrap(space);
+	arg_start = isl_space_dim(space, isl_dim_in);
+	n_arg = isl_space_dim(space, isl_dim_out);
+	isl_space_free(space);
+
+	return isl_pw_aff_involves_dims(pa, isl_dim_in, arg_start, n_arg);
+}
+
+/* Check if expression "expr" is an indirect access.
+ * In particular, check whether its indices are defined over a wrapped domain.
+ */
+static isl_bool is_access_indirection(__isl_keep pet_expr *expr) {
+	isl_multi_pw_aff *index;
+	isl_space *space;
+	isl_bool b;
+
+	if (pet_expr_get_type(expr) != pet_expr_access)
+		return isl_bool_false;
+
+	index = pet_expr_access_get_index(expr);
+	space = isl_multi_pw_aff_get_space(index);
+	isl_multi_pw_aff_free(index);
+	space = isl_space_domain(space);
+	b = isl_space_is_wrapping(space);
+	isl_space_free(space);
+
+	return b;
+}
+
+/* Setup the indirection and indirect_access fields of the given GPU access
+ * descriptor "access".
+ *
+ * If "access" is indirect, expression "expr" has exactly one argument, this
+ * argument does not feature indirection itself, and only one index expression
+ * is indirected, then set "indirection" to the GPU access descriptor of the
+ * index expression and "indirect_index" to the index dimension where this
+ * indirection appears.  Otherwise set "indirection" to NULL.
+ *
+ * For example, this will accept the following cases:
+ *
+ * A[B[i]], A[i][B[j+i]][i],
+ *
+ * and will ignore the following cases:
+ *
+ * A[B[C[i]]], A[B[i]][B[i]].
+ */
+static void setup_indirection(__isl_keep pet_expr *expr,
+	struct ppcg_extract_access_data *data,
+	struct gpu_stmt_access *access,
+	__isl_keep isl_multi_pw_aff *index)
+{
+	isl_bool b, arg_indirection;
+	struct gpu_stmt_access *indirection;
+	isl_id *indirection_ref_id;
+	int n_arg, n_out, i, indirect_index;
+	pet_expr *arg;
+	isl_ctx *ctx = pet_expr_get_ctx(expr);
+
+	access->indirection = NULL;
+	access->indirect_index_expr = NULL;
+
+	b = is_access_indirection(expr);
+	if (b < 0 || !b)
+		return;
+
+	n_arg = pet_expr_get_n_arg(expr);
+	if (n_arg <= 0)
+		isl_die(ctx, isl_error_internal,
+			"expected expr arg for indirect access",
+			return);
+
+	if (n_arg > 1)
+		return;
+
+	arg = pet_expr_get_arg(expr, 0);
+	arg_indirection = is_access_indirection(arg);
+	if (arg_indirection < 0 || arg_indirection) {
+		pet_expr_free(arg);
+		return;
+	}
+
+	indirection_ref_id = pet_expr_access_get_ref_id(arg);
+	indirection = find_access(data->stmt->accesses,
+		indirection_ref_id);
+	pet_expr_free(arg);
+	isl_id_free(indirection_ref_id);
+
+	if (!indirection)
+		isl_die(ctx, isl_error_internal,
+			"could not find indirection access",
+			return);
+
+	indirect_index = -1;
+	n_out = isl_multi_pw_aff_dim(index, isl_dim_out);
+	for (i = 0; i < n_out; ++i) {
+		isl_bool r;
+		isl_pw_aff *pa = isl_multi_pw_aff_get_pw_aff(index, i);
+
+		r = pw_aff_is_arg_dependent(pa);
+		isl_pw_aff_free(pa);
+		if (r < 0)
+			return;
+
+		if (r) {
+			if (indirect_index == -1)
+				indirect_index = i;
+			else
+				return;
+		}
+	}
+	if (indirect_index == -1)
+		return;
+
+	access->indirection = indirection;
+	access->indirect_index = indirect_index;
+	access->indirect_index_expr =
+		isl_multi_pw_aff_get_pw_aff(index, indirect_index);
+}
+
 /* Extract a gpu_stmt_access from "expr", append it to the list
  * that ends in *data->next_access and update the end of the list.
  * If the access expression performs a write, then it is considered
@@ -5367,6 +5873,7 @@ static int extract_access(__isl_keep pet_expr *expr, void *user)
 	}
 	index = pet_expr_access_get_index(expr);
 	access->n_index = isl_multi_pw_aff_dim(index, isl_dim_out);
+	setup_indirection(expr, data, access, index);
 	isl_multi_pw_aff_free(index);
 	access->ref_id = pet_expr_access_get_ref_id(expr);
 	access->tagged_access = extract_single_tagged_access(tagged, expr);
@@ -5397,6 +5904,7 @@ static int pet_stmt_extract_accesses(struct gpu_stmt *stmt,
 	data.single_expression =
 		pet_tree_get_type(stmt->stmt->body) == pet_tree_expr;
 	data.any_to_outer = any_to_outer;
+	data.stmt = stmt;
 	return pet_tree_foreach_access_expr(stmt->stmt->body,
 						&extract_access, &data);
 }
@@ -5565,12 +6073,27 @@ static __isl_give isl_printer *generate_wrap(__isl_take isl_printer *p,
 
 /* Transform the code in the file called "input" by replacing
  * all scops by corresponding GPU code and write the results to "out".
+ * Use the "generate_kernel" callback to transform the schedule tree node
+ * marked as kernel; if callback is NULL, use gpu_create_kernel instead.
+ * Use the "merge_callback" in the schedule clustering heuristic, providing it
+ * with "merge_callback_user" as the last argument.
  */
-int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
+int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
 	struct ppcg_options *options,
 	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
 		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
-		struct gpu_types *types, void *user), void *user)
+		struct gpu_types *types, void *user), void *user,
+	__isl_give isl_basic_set *(*add_custom_constraints)(
+		__isl_take isl_basic_set *, int, int,
+		__isl_keep isl_id_list *, int *, int *, void *),
+	void *userc,
+	isl_bool (*merge_callback)(__isl_take isl_union_map *original_schedule,
+		__isl_take isl_union_map *updated_schedule,
+		int n_coincident_after, int n_coincident_before,
+		int is_along_edge, void *user), void *merge_callback_user,
+        __isl_give isl_schedule_node *(*generate_kernel)(
+		struct gpu_gen *, __isl_take isl_schedule_node *node,
+		int, isl_multi_val *, void *user), void *user2)
 {
 	struct gpu_gen gen;
 	int r;
@@ -5582,8 +6105,14 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 	gen.kernel_id = 0;
 	gen.print = print;
 	gen.print_user = user;
+        gen.generate_kernel = generate_kernel;
+        gen.generate_kernel_user = user2;
+	gen.add_schedule_constraints = add_custom_constraints;
+	gen.add_schedule_constraints_user = userc;
 	gen.types.n = 0;
 	gen.types.name = NULL;
+	gen.merge_callback = merge_callback;
+	gen.merge_callback_user = merge_callback_user;
 
 	if (options->debug->dump_sizes) {
 		isl_space *space = isl_space_params_alloc(ctx, 0);
@@ -5603,6 +6132,19 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 	free(gen.types.name);
 
 	return r;
+}
+
+/* Transform the code in the file called "input" by replacing
+ * all scops by corresponding GPU code and write the results to "out".
+ */
+int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
+	struct ppcg_options *options,
+	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
+		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
+		struct gpu_types *types, void *user), void *user)
+{
+	return generate_gpu_custom(ctx, input, out, options, print, user,
+                                   NULL, NULL, NULL, NULL, NULL, NULL);
 }
 
 /* Compute the set of inner array elements that may have their values

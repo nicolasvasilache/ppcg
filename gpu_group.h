@@ -62,4 +62,48 @@ struct gpu_array_tile *gpu_array_ref_group_tile(
 struct gpu_array_ref_group *gpu_array_ref_group_free(
 	struct gpu_array_ref_group *group);
 
+/* Internal data structure for gpu_group_references.
+ *
+ * scop represents the input scop.
+ * kernel_depth is the schedule depth where the kernel launch will
+ * be introduced, i.e., it is the depth of the band that is mapped
+ * to blocks.
+ * shared_depth is the schedule depth at which the copying to/from
+ * shared memory is computed.  The copy operation may then
+ * later be hoisted to a higher level.
+ * thread_depth is the schedule depth where the thread mark is located,
+ * i.e., it is the depth of the band that is mapped to threads and also
+ * the schedule depth at which the copying to/from private memory
+ * is computed.  The copy operation may then later be hoisted to
+ * a higher level.
+ * n_thread is the number of schedule dimensions in the band that
+ * is mapped to threads.
+ * privatization lives in the range of thread_sched (i.e., it is
+ * of dimension thread_depth + n_thread) and encodes the mapping
+ * to thread identifiers (as parameters).
+ * host_sched contains the kernel_depth dimensions of the host schedule.
+ * shared_sched contains the first shared_depth dimensions of the
+ * kernel schedule.
+ * copy_sched contains the first thread_depth dimensions of the
+ * kernel schedule.
+ * thread_sched contains the first (thread_depth + n_thread) dimensions
+ * of the kernel schedule.
+ * full_sched is a union_map representation of the entire kernel schedule.
+ * The schedules are all formulated in terms of the original statement
+ * instances, i.e., those that appear in the domains of the access
+ * relations.
+ */
+struct gpu_group_data {
+  struct ppcg_scop *scop;
+  int kernel_depth;
+  int shared_depth;
+  int thread_depth;
+  int n_thread;
+  isl_set *privatization;
+  isl_union_map *host_sched;
+  isl_union_map *shared_sched;
+  isl_union_map *copy_sched;
+  isl_union_map *thread_sched;
+  isl_union_map *full_sched;
+};
 #endif

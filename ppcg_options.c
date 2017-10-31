@@ -31,6 +31,8 @@ void ppcg_options_set_target_defaults(struct ppcg_options *options)
 		argv[1] = "--schedule-outer-coincidence";
 
 	isl_options_parse(options->isl, 2, argv, ISL_ARG_ALL);
+
+        options->callbacks = NULL;
 }
 
 /* Callback that is called whenever the "target" option is set (to "val").
@@ -91,6 +93,8 @@ ISL_ARG_BOOL(struct ppcg_options, use_shared_memory, 0, "shared-memory", 1,
 	"use shared memory in kernel code")
 ISL_ARG_BOOL(struct ppcg_options, use_private_memory, 0, "private-memory", 1,
 	"use private memory in kernel code")
+ISL_ARG_BOOL(struct ppcg_options, override_context, 0, "override-context", 0,
+	"override PET-extracted context with the one provided in --ctx")
 ISL_ARG_STR(struct ppcg_options, ctx, 0, "ctx", "context", NULL,
     "Constraints on parameters")
 ISL_ARG_BOOL(struct ppcg_options, non_negative_parameters, 0,
@@ -98,13 +102,16 @@ ISL_ARG_BOOL(struct ppcg_options, non_negative_parameters, 0,
 	"assume all parameters are non-negative)")
 ISL_ARG_BOOL(struct ppcg_options, tile, 0, "tile", 0,
 	"perform tiling (C target)")
-ISL_ARG_INT(struct ppcg_options, tile_size, 'S', "tile-size", "size", 32, NULL)
+//ISL_ARG_INT(struct ppcg_options, tile_size, 'S', "tile-size", "size", 32, NULL)
+ISL_ARG_INT(struct ppcg_options, tile_size, 'S', "tile-size", "size", 1, NULL)
 ISL_ARG_BOOL(struct ppcg_options, isolate_full_tiles, 0, "isolate-full-tiles",
 	0, "isolate full tiles from partial tiles (hybrid tiling)")
 ISL_ARG_STR(struct ppcg_options, sizes, 0, "sizes", "sizes", NULL,
 	"Per kernel tile, grid and block sizes")
 ISL_ARG_INT(struct ppcg_options, max_shared_memory, 0,
 	"max-shared-memory", "size", 8192, "maximal amount of shared memory")
+ISL_ARG_BOOL(struct ppcg_options, print_host_code, 0, "print-host-code", 1,
+	"Generate host code (CUDA targets)")
 ISL_ARG_BOOL(struct ppcg_options, openmp, 0, "openmp", 0,
 	"Generate OpenMP macros (only for C target)")
 ISL_ARG_USER_OPT_CHOICE(struct ppcg_options, target, 0, "target", target,

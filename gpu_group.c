@@ -379,7 +379,7 @@ static isl_stat compute_size_in_direction(__isl_take isl_constraint *c,
  * In particular, we currently only consider lower bounds on the output
  * dimension as candidate expressions.
  */
-static int compute_array_dim_size(struct gpu_array_bound *bound,
+int compute_array_dim_size(struct gpu_array_bound *bound,
 	__isl_take isl_basic_map *bounds)
 {
 	struct gpu_size_info size;
@@ -432,51 +432,6 @@ static int can_tile(__isl_keep isl_map *access, struct gpu_array_tile *tile)
 
 	return 1;
 }
-
-/* Internal data structure for gpu_group_references.
- *
- * scop represents the input scop.
- * kernel_depth is the schedule depth where the kernel launch will
- * be introduced, i.e., it is the depth of the band that is mapped
- * to blocks.
- * shared_depth is the schedule depth at which the copying to/from
- * shared memory is computed.  The copy operation may then
- * later be hoisted to a higher level.
- * thread_depth is the schedule depth where the thread mark is located,
- * i.e., it is the depth of the band that is mapped to threads and also
- * the schedule depth at which the copying to/from private memory
- * is computed.  The copy operation may then later be hoisted to
- * a higher level.
- * n_thread is the number of schedule dimensions in the band that
- * is mapped to threads.
- * privatization lives in the range of thread_sched (i.e., it is
- * of dimension thread_depth + n_thread) and encodes the mapping
- * to thread identifiers (as parameters).
- * host_sched contains the kernel_depth dimensions of the host schedule.
- * shared_sched contains the first shared_depth dimensions of the
- * kernel schedule.
- * copy_sched contains the first thread_depth dimensions of the
- * kernel schedule.
- * thread_sched contains the first (thread_depth + n_thread) dimensions
- * of the kernel schedule.
- * full_sched is a union_map representation of the entire kernel schedule.
- * The schedules are all formulated in terms of the original statement
- * instances, i.e., those that appear in the domains of the access
- * relations.
- */
-struct gpu_group_data {
-	struct ppcg_scop *scop;
-	int kernel_depth;
-	int shared_depth;
-	int thread_depth;
-	int n_thread;
-	isl_set *privatization;
-	isl_union_map *host_sched;
-	isl_union_map *shared_sched;
-	isl_union_map *copy_sched;
-	isl_union_map *thread_sched;
-	isl_union_map *full_sched;
-};
 
 /* Construct a map from domain_space to domain_space that increments
  * the dimension at position "pos" and leaves all other dimensions
@@ -624,14 +579,14 @@ static int access_is_bijective(struct gpu_group_data *data,
 /* Compute the number of outer schedule tile dimensions that affect
  * the offset of "tile".
  * If there is no such dimension, then return the index
- * of the first kernel dimension, i.e., data->kernel_depth.
+ * of the first dimension under the "shared" mark, i.e., data->shared_depth.
  */
 static int compute_tile_depth(struct gpu_group_data *data,
 	struct gpu_array_tile *tile)
 {
 	int i, j;
 
-	for (j = tile->depth - 1; j >= data->kernel_depth; --j) {
+	for (j = tile->depth - 1; j >= data->shared_depth; --j) {
 		for (i = 0; i < tile->n; ++i) {
 			isl_aff *lb;
 			isl_aff *shift;
@@ -883,7 +838,7 @@ struct gpu_array_ref_group *gpu_array_ref_group_free(
 /* Check if the access relations of group1 and group2 overlap within
  * copy_sched.
  */
-static int accesses_overlap(struct gpu_array_ref_group *group1,
+int accesses_overlap(struct gpu_array_ref_group *group1,
 	struct gpu_array_ref_group *group2)
 {
 	int disjoint;
@@ -898,7 +853,7 @@ static int accesses_overlap(struct gpu_array_ref_group *group1,
 /* Combine the given two groups into a single group, containing
  * the references of both groups.
  */
-static struct gpu_array_ref_group *join_groups(
+struct gpu_array_ref_group *join_groups(
 	struct gpu_array_ref_group *group1,
 	struct gpu_array_ref_group *group2)
 {
@@ -936,7 +891,7 @@ static struct gpu_array_ref_group *join_groups(
 /* Combine the given two groups into a single group and free
  * the original two groups.
  */
-static struct gpu_array_ref_group *join_groups_and_free(
+struct gpu_array_ref_group *join_groups_and_free(
 	struct gpu_array_ref_group *group1,
 	struct gpu_array_ref_group *group2)
 {
@@ -1004,7 +959,7 @@ static int check_requires_unroll(struct gpu_group_data *data,
  * schedule dimensions.  When data->shared_depth is equal to
  * data->thread_depth, this result is already available in group->access.
  */
-static __isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
+__isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
 	__isl_keep isl_union_map *access, struct gpu_group_data *data)
 {
 	isl_union_map *shared;
@@ -1042,6 +997,9 @@ static __isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
  * or if the access is not coalesced.
  * Reuse and coalescing are checked within the given kernel.
  *
+ * The access relation is intersected with the array extent so as to consider
+ * the entire array as a tile if it is small enough.
+ *
  * For computing a private memory tile, we also require that there is
  * some reuse.  Moreover, we require that the access is private
  * to the thread.  That is, we check that any given array element
@@ -1057,12 +1015,15 @@ static __isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
  *
  * For private memory tiles, the number of schedule dimensions that
  * affect the offset is computed and stored in tile->depth, with
- * a lower bound of data->kernel_depth.  If this depth is smaller
+ * a lower bound of data->shared_depth.  If this depth is smaller
  * than the minimal depth that still ensures that every element
  * is accessed by a single thread, then the depth is raised
  * to this minimal depth.
  * The fields of the tile are then adjusted to only refer to the tile->depth
  * outer schedule dimensions.
+ *
+ * Private memory tiles are not computed if there are no parallel threads,
+ * i.e. n_threads == 0.
  *
  * We also check that the index expression only depends on parallel
  * loops.  That way, we can move those loops innermost and unroll them.
@@ -1103,6 +1064,7 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 	int r = 0;
 	int requires_unroll;
 	int unique_depth;
+	isl_union_set *extent;
 
 	if (!use_shared && !use_private)
 		return 0;
@@ -1114,6 +1076,8 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 		return 0;
 
 	access = gpu_array_ref_group_access_relation(group, 1, 1);
+	extent = isl_union_set_from_set(isl_set_copy(group->array->extent));
+	access = isl_union_map_intersect_range(access, extent);
 	local = localize_access(data, isl_union_map_copy(access));
 	no_reuse = isl_union_map_is_injective(local);
 	if (no_reuse < 0)
@@ -1130,6 +1094,8 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 		group->shared_tile = gpu_array_tile_create(ctx,
 							group->array->n_index);
 		acc = shared_access(group, access, data);
+		acc = isl_map_intersect_range(acc,
+			isl_set_copy(group->array->extent));
 		if (!group->shared_tile)
 			r = -1;
 		else if (!can_tile(acc, group->shared_tile))
@@ -1171,7 +1137,7 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
 		return -1;
 	}
 	group->private_tile->requires_unroll = requires_unroll;
-	if (!can_tile(acc, group->private_tile))
+	if (data->n_thread == 0 || !can_tile(acc, group->private_tile))
 		group->private_tile = gpu_array_tile_free(group->private_tile);
 
 	isl_map_free(acc);
@@ -1197,7 +1163,7 @@ static int compute_group_bounds_core(struct ppcg_kernel *kernel,
  * reference group "group" of array "array" and set the tile depth.
  * Return 0 on success and -1 on error.
  */
-static int compute_group_bounds(struct ppcg_kernel *kernel,
+int compute_group_bounds(struct ppcg_kernel *kernel,
 	struct gpu_array_ref_group *group, struct gpu_group_data *data)
 {
 	if (!group)
@@ -1276,7 +1242,7 @@ static int group_overlapping_writes(struct ppcg_kernel *kernel,
 /* Check if the access relations of group1 and group2 overlap within
  * the outermost min(group1->min_depth, group2->min_depth) loops.
  */
-static int depth_accesses_overlap(struct gpu_array_ref_group *group1,
+int depth_accesses_overlap(struct gpu_array_ref_group *group1,
 	struct gpu_array_ref_group *group2)
 {
 	int depth;
@@ -1315,7 +1281,7 @@ static int group_depth_overlapping_writes(struct ppcg_kernel *kernel,
 /* Is the size of the tile specified by "tile" smaller than the sum of
  * the sizes of the tiles specified by "tile1" and "tile2"?
  */
-static int smaller_tile(struct gpu_array_tile *tile,
+int smaller_tile(struct gpu_array_tile *tile,
 	struct gpu_array_tile *tile1, struct gpu_array_tile *tile2)
 {
 	int smaller;
@@ -1421,7 +1387,7 @@ static void set_array_groups(struct gpu_local_array_info *array,
 /* Combine all groups in "groups" into a single group and return
  * the new number of groups (1 or 0 if there were no groups to start with).
  */
-static int join_all_groups(int n, struct gpu_array_ref_group **groups)
+int join_all_groups(int n, struct gpu_array_ref_group **groups)
 {
 	int i;
 
@@ -1508,7 +1474,7 @@ static int group_array_references(struct ppcg_kernel *kernel,
  * had their order dependences added to prog->array_order and
  * subsequently to the coincidence constraints.
  */
-static void check_can_be_private_live_ranges(struct ppcg_kernel *kernel,
+void check_can_be_private_live_ranges(struct ppcg_kernel *kernel,
 	__isl_keep isl_schedule_node *node)
 {
 	int i;
@@ -1638,8 +1604,11 @@ static __isl_give isl_union_map *prefix_with_equalities(
  * a gpu_group_data structure and then consider each array
  * in turn.
  */
-int gpu_group_references(struct ppcg_kernel *kernel,
-	__isl_keep isl_schedule_node *node)
+int gpu_group_references_with_traversal(
+  struct ppcg_kernel *kernel,
+  __isl_keep isl_schedule_node *node,
+  isl_schedule_node* (*move_down_to_shared)(isl_schedule_node *, isl_union_set *),
+  isl_schedule_node* (*move_down_to_thread)(isl_schedule_node *, isl_union_set *))
 {
 	int i;
 	int r = 0;
@@ -1654,13 +1623,14 @@ int gpu_group_references(struct ppcg_kernel *kernel,
 	data.host_sched = isl_schedule_node_get_prefix_schedule_relation(node);
 
 	node = isl_schedule_node_copy(node);
-	node = gpu_tree_move_down_to_shared(node, kernel->core);
+	node = move_down_to_shared(node, kernel->core);
 	data.shared_depth = isl_schedule_node_get_schedule_depth(node);
 	data.shared_sched = prefix_with_equalities(node);
 
-	node = gpu_tree_move_down_to_thread(node, kernel->core);
+	node = move_down_to_thread(node, kernel->core);
 	node = isl_schedule_node_child(node, 0);
 	data.thread_depth = isl_schedule_node_get_schedule_depth(node);
+
 	data.n_thread = isl_schedule_node_band_n_member(node);
 	if (data.thread_depth == data.shared_depth)
 		data.copy_sched = isl_union_map_copy(data.shared_sched);
@@ -1705,6 +1675,16 @@ int gpu_group_references(struct ppcg_kernel *kernel,
 	isl_set_free(data.privatization);
 
 	return r;
+}
+
+int gpu_group_references(struct ppcg_kernel *kernel,
+	__isl_keep isl_schedule_node *node)
+{
+  return gpu_group_references_with_traversal(
+    kernel,
+    node,
+    gpu_tree_move_down_to_shared,
+    gpu_tree_move_down_to_thread);
 }
 
 /* Given a description of an array tile "tile" and the "space"

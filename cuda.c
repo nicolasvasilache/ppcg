@@ -400,15 +400,45 @@ static void print_kernel_iterators(FILE *out, struct ppcg_kernel *kernel)
 	print_iterators(out, type, kernel->thread_ids, thread_dims);
 }
 
+static __isl_give isl_printer *print_type_strip_const(__isl_take isl_printer *p,
+	struct ppcg_kernel_var *var)
+{
+	const char kw_const[] = "const ";
+	char *pos;
+	char *type;
+
+	if ((pos = strstr(var->array->type, kw_const))) {
+		size_t full_length = strlen(var->array->type);
+		size_t length = full_length - sizeof(kw_const) + 1;
+		size_t prefix_length = pos - var->array->type;
+		type = isl_alloc_array(isl_printer_get_ctx(p),
+			char, length);
+		strncpy(type, var->array->type, prefix_length);
+		strncpy(type + prefix_length, pos + sizeof(kw_const) - 1,
+			full_length - prefix_length - sizeof(kw_const) + 1);
+		type[length] = 0;
+		p = isl_printer_print_str(p, type);
+		free(type);
+	} else {
+		p = isl_printer_print_str(p, var->array->type);
+	}
+	return p;
+}
+
 static __isl_give isl_printer *print_kernel_var(__isl_take isl_printer *p,
 	struct ppcg_kernel_var *var)
 {
 	int j;
 
 	p = isl_printer_start_line(p);
-	if (var->type == ppcg_access_shared)
+	if (var->type == ppcg_access_shared) {
 		p = isl_printer_print_str(p, "__shared__ ");
-	p = isl_printer_print_str(p, var->array->type);
+		p = print_type_strip_const(p, var);
+	} else if (var->type == ppcg_access_private) {
+		p = print_type_strip_const(p, var);
+	} else {
+		p = isl_printer_print_str(p, var->array->type);
+	}
 	p = isl_printer_print_str(p, " ");
 	p = isl_printer_print_str(p,  var->name);
 	for (j = 0; j < var->array->n_index; ++j) {
@@ -416,6 +446,18 @@ static __isl_give isl_printer *print_kernel_var(__isl_take isl_printer *p,
 
 		p = isl_printer_print_str(p, "[");
 		v = isl_vec_get_element_val(var->size, j);
+		/* Always pad to nearest >= odd value, this guarantees a best
+		 * effort solution to shared memory bank conflicts within 2x
+		 * of best. For guaranteed conflict resolution, just use
+		 * vector types.
+		 */
+		if (var->array->n_index > 1 && j == var->array->n_index - 1) {
+			if (isl_val_is_zero(isl_val_mod(isl_val_copy(v),
+				isl_val_int_from_ui(
+					isl_val_get_ctx(v), 2)))) {
+				v = isl_val_add_ui(v, 1);
+			}
+		}
 		p = isl_printer_print_val(p, v);
 		isl_val_free(v);
 		p = isl_printer_print_str(p, "]");
@@ -464,6 +506,9 @@ static __isl_give isl_printer *print_kernel_stmt(__isl_take isl_printer *p,
 	isl_id_free(id);
 
 	isl_ast_print_options_free(print_options);
+	
+	if (!stmt)
+		return p;
 
 	switch (stmt->type) {
 	case ppcg_kernel_copy:
@@ -660,6 +705,40 @@ static __isl_give isl_printer *print_host_user(__isl_take isl_printer *p,
 	return p;
 }
 
+/* Print the kernels without emitting any host code.
+ * If host code other than launching the kernel is required, return NULL.
+ *
+ * Kernels are printed to the file pointer to by
+ * ((struct print_host_user_data *) user)->cuda
+ * and not using the printer, for consistency with the the full code generator.
+ */
+static __isl_give isl_printer *print_kernel_only_user(__isl_take isl_printer *p,
+	__isl_take isl_ast_print_options *print_options,
+	__isl_keep isl_ast_node *node, void *user)
+{
+	int is_kernel;
+	struct print_host_user_data *data;
+	struct ppcg_kernel *kernel;
+	isl_id *id;
+
+	isl_ast_print_options_free(print_options);
+
+	data = (struct print_host_user_data *) user;
+	id = isl_ast_node_get_annotation(node);
+	if (!id)
+		return isl_printer_free(p);
+
+	is_kernel = strcmp(isl_id_get_name(id), "user");
+	isl_id_free(id);
+	if (!is_kernel)
+		return isl_printer_free(p);
+	kernel = isl_id_get_user(id);
+
+	print_kernel(data->prog, kernel, data->cuda);
+
+	return p;
+}
+
 static __isl_give isl_printer *print_host_code(__isl_take isl_printer *p,
 	struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
 	struct cuda_info *cuda)
@@ -669,8 +748,12 @@ static __isl_give isl_printer *print_host_code(__isl_take isl_printer *p,
 	struct print_host_user_data data = { cuda, prog };
 
 	print_options = isl_ast_print_options_alloc(ctx);
-	print_options = isl_ast_print_options_set_print_user(print_options,
-						&print_host_user, &data);
+	if (prog->scop->options->print_host_code)
+		print_options = isl_ast_print_options_set_print_user(
+			print_options, &print_host_user, &data);
+	else
+		print_options = isl_ast_print_options_set_print_user(
+			print_options, &print_kernel_only_user, &data);
 
 	p = gpu_print_macros(p, tree);
 	p = isl_ast_node_print(tree, p, print_options);
@@ -683,7 +766,7 @@ static __isl_give isl_printer *print_host_code(__isl_take isl_printer *p,
  * "types" collects the types for which a definition has already
  * been printed.
  */
-static __isl_give isl_printer *print_cuda(__isl_take isl_printer *p,
+__isl_give isl_printer *print_cuda(__isl_take isl_printer *p,
 	struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
 	struct gpu_types *types, void *user)
 {

@@ -12,6 +12,8 @@ struct ppcg_debug_options {
 	int verbose;
 };
 
+struct ppcg_callbacks;
+
 struct ppcg_options {
 	struct isl_options *isl;
 	struct ppcg_debug_options *debug;
@@ -26,6 +28,11 @@ struct ppcg_options {
 
 	/* Assume all parameters are non-negative. */
 	int non_negative_parameters;
+
+	/* Override PET-extracted context with the one in ctx
+	   (default is interect). */
+	int override_context;
+
 	char *ctx;
 	char *sizes;
 
@@ -44,6 +51,9 @@ struct ppcg_options {
 
 	/* Maximal amount of shared memory. */
 	int max_shared_memory;
+
+	/* Print host code (CUDA target). */
+	int print_host_code;
 
 	/* The target we generate code for. */
 	int target;
@@ -84,7 +94,9 @@ struct ppcg_options {
 	/* Name of file for saving isl computed schedule or NULL. */
 	char *save_schedule_file;
 	/* Name of file for loading schedule or NULL. */
-	char *load_schedule_file;
+	const char *load_schedule_file;
+
+        struct ppcg_callbacks* callbacks;
 };
 
 ISL_ARG_DECL(ppcg_debug_options, struct ppcg_debug_options,
@@ -95,6 +107,14 @@ ISL_ARG_DECL(ppcg_options, struct ppcg_options, ppcg_options_args)
 #define		PPCG_TARGET_CUDA	1
 #define		PPCG_TARGET_OPENCL      2
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 void ppcg_options_set_target_defaults(struct ppcg_options *options);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif
