@@ -190,6 +190,8 @@ struct gpu_prog {
 	/* All tagged definite kills in the entire program */
 	isl_union_map *tagged_must_kill;
 
+	isl_schedule_constraints *sc;
+
 	/* The set of inner array elements that may be preserved. */
 	isl_union_set *may_persist;
 
