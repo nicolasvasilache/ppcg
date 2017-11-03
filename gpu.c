@@ -4742,7 +4742,7 @@ static __isl_give isl_schedule *compute_schedule(struct gpu_gen *gen)
 	isl_schedule_constraints *sc;
 	isl_schedule *schedule;
 
-	sc = construct_schedule_constraints(gen->prog);
+	sc = isl_schedule_constraints_copy(gen->prog->sc);
 	if (gen->add_schedule_constraints)
 		sc = isl_schedule_constraints_set_custom_constraint_callback(sc,
 			gen->add_schedule_constraints,
@@ -4784,10 +4784,9 @@ static __isl_give isl_schedule *determine_properties_original_schedule(
 	isl_schedule_constraints *sc;
 
 	schedule = isl_schedule_copy(gen->prog->scop->schedule);
-	sc = construct_schedule_constraints(gen->prog);
+	sc = gen->prog->sc;
 	schedule = isl_schedule_map_schedule_node_bottom_up(schedule,
 						    &set_band_properties, sc);
-	isl_schedule_constraints_free(sc);
 
 	return schedule;
 }
@@ -6036,6 +6035,7 @@ static __isl_give isl_printer *generate(__isl_take isl_printer *p,
 	if (!prog)
 		return isl_printer_free(p);
 
+	prog->sc = construct_schedule_constraints(prog);
 	gen->prog = prog;
 	schedule = get_schedule(gen);
 
@@ -6240,6 +6240,7 @@ void *gpu_prog_free(struct gpu_prog *prog)
 	isl_union_map_free(prog->tagged_must_kill);
 	isl_union_map_free(prog->array_order);
 	isl_union_set_free(prog->may_persist);
+	isl_schedule_constraints_free(prog->sc);
 	isl_set_free(prog->context);
 	free(prog);
 	return NULL;
