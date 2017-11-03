@@ -24,6 +24,7 @@
 #include <isl/schedule_node.h>
 #include <isl/options.h>
 #include <isl/ast_build.h>
+#include <isl/point.h>
 
 #include "cpu.h"
 #include "gpu.h"
@@ -4378,6 +4379,88 @@ __isl_give isl_schedule_node* mark_thread(
         return node;
 }
 
+static int can_handle_multiple_thread_node(struct gpu_gen *gen)
+{
+	if (!gen->options->callbacks)
+		return 0;
+	if (!gen->options->callbacks->mark_thread_callback)
+		return 0;
+	if (!gen->generate_kernel)
+		return 0;
+	return 1;
+}
+
+static __isl_give isl_multi_val *update_cross_band_tile_sizes(
+	__isl_take isl_multi_val *sizes, __isl_keep isl_union_map *all_sizes,
+	int id)
+{
+	isl_space *space;
+	isl_set *cross;
+	isl_point *point;
+	isl_bool is_void;
+
+	space = isl_multi_val_get_space(sizes);
+	space = isl_space_from_range(space);
+	space = isl_space_flatten_range(space);
+	space = isl_space_add_dims(space, isl_dim_in, 1);
+	space = isl_space_set_tuple_name(space, isl_dim_in, "kernel");
+	space = isl_space_set_tuple_name(space, isl_dim_out, "cross");
+	cross = isl_map_range(isl_union_map_extract_map(all_sizes, space));
+	point = isl_set_sample_point(cross);
+	is_void = isl_point_is_void(point);
+	if (is_void < 0) {
+		sizes = isl_multi_val_free(sizes);
+	} else if (!is_void) {
+		int i, n;
+
+		n = isl_multi_val_dim(sizes, isl_dim_set);
+		for (i = 0; i < n; ++i) {
+			isl_val *v;
+
+			v = isl_point_get_coordinate_val(point, isl_dim_set, i);
+			sizes = isl_multi_val_set_val(sizes, i, v);
+		}
+	}
+	isl_point_free(point);
+	return sizes;
+}
+
+static __isl_give isl_schedule_node *mark_outer_cross_band(
+	__isl_take isl_schedule_node *node, struct gpu_gen *gen)
+{
+	int i, n;
+	int scale;
+	isl_space *space;
+	isl_val *size;
+	isl_multi_val *sizes;
+
+	space = ppcg_schedule_node_get_cross_tile_space(node);
+	sizes = isl_multi_val_zero(space);
+
+	size = isl_val_int_from_si(gen->ctx, gen->options->tile_size);
+	n = isl_multi_val_dim(sizes, isl_dim_set);
+	for (i = 0; i < n; ++i)
+		sizes = isl_multi_val_set_val(sizes, i, isl_val_copy(size));
+	isl_val_free(size);
+
+	sizes = update_cross_band_tile_sizes(sizes, gen->sizes, gen->kernel_id);
+
+	node = ppcg_schedule_node_cross_tile(node, isl_multi_val_copy(sizes),
+						gen->prog->sc);
+
+	node = isl_schedule_node_child(node, 0);
+	node = mark_thread(node, gen);
+
+	scale = gen->options->scale_tile_loops;
+
+	sizes = isl_multi_val_factor_domain(sizes);
+	node = gen->generate_kernel(gen, node, scale, sizes,
+				    gen->generate_kernel_user);
+	isl_multi_val_free(sizes);
+
+	return node;
+}
+
 /* If "node" is the outermost permutable band that can be mapped to block and
  * thread identifiers in its branch (or the root of a subtree with
  * no such outer bands),
@@ -4423,6 +4506,17 @@ static __isl_give isl_schedule_node *mark_outer_permutable(
 		isl_schedule_node_free(saved);
 		if (node != saved)
 			return node;
+	}
+
+	if (gen->options->cross_band_tile &&
+	    can_handle_multiple_thread_node(gen)) {
+		isl_bool can_cross_tile;
+		can_cross_tile = ppcg_schedule_node_can_cross_tile(node,
+								gen->prog->sc);
+		if (can_cross_tile < 0)
+			return isl_schedule_node_free(node);
+		if (can_cross_tile)
+			return mark_outer_cross_band(node, gen);
 	}
 
 	if (isl_schedule_node_get_type(node) != isl_schedule_node_band ||
