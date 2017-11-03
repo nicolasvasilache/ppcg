@@ -130,6 +130,8 @@ ISL_ARG_BOOL(struct ppcg_options, live_range_reordering, 0,
 ISL_ARG_BOOL(struct ppcg_options, hybrid, 0, "hybrid", 0,
 	"apply hybrid tiling whenever a suitable input pattern is found "
 	"(GPU targets)")
+ISL_ARG_BOOL(struct ppcg_options, cross_band_tile, 0, "tile_cross_band", 0,
+	"apply cross band tiling (GPU targets)")
 ISL_ARG_BOOL(struct ppcg_options, unroll_copy_shared, 0, "unroll-copy-shared",
 	0, "unroll code for copying to/from shared memory")
 ISL_ARG_BOOL(struct ppcg_options, unroll_gpu_tile, 0, "unroll-gpu-tile", 0,
