@@ -1,16 +1,21 @@
 /*
  * Copyright 2012-2013 Ecole Normale Superieure
+ * Copyright 2015      INRIA Rocquencourt
  *
  * Use of this software is governed by the MIT license
  *
  * Written by Sven Verdoolaege,
  * Ecole Normale Superieure, 45 rue d'Ulm, 75230 Paris, France
+ * and Inria Paris - Rocquencourt, Domaine de Voluceau - Rocquencourt,
+ * B.P. 105 - 78153 Le Chesnay, France
  */
 
 #include <isl/space.h>
 #include <isl/val.h>
 #include <isl/aff.h>
 #include <isl/set.h>
+#include <isl/union_set.h>
+#include <isl/union_map.h>
 
 #include "util.h"
 
@@ -102,4 +107,22 @@ __isl_give isl_multi_pw_aff *ppcg_size_from_extent(__isl_take isl_set *set)
 	isl_set_free(set);
 
 	return mpa;
+}
+
+/* Given a binary relation between tagged instances,
+ * construct a function that drops the tags from
+ * the domain and the range instances.
+ */
+__isl_give isl_union_pw_multi_aff *ppcg_extract_untag_from_tagged_relation(
+	__isl_keep isl_union_map *tagged)
+{
+	isl_union_map *universe;
+	isl_union_set *domain, *range;
+
+	universe = isl_union_map_universe(isl_union_map_copy(tagged));
+	domain = isl_union_map_domain(isl_union_map_copy(universe));
+	range = isl_union_map_range(universe);
+	domain = isl_union_set_union(domain, range);
+	universe = isl_union_set_unwrap(domain);
+	return isl_union_map_domain_map_union_pw_multi_aff(universe);
 }
