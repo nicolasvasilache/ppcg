@@ -2090,65 +2090,40 @@ static struct gpu_array_ref_group *find_group_by_id(struct ppcg_kernel *kernel,
  *
  * and the original subscript connected to AST iterators L of the form
  *
- * 	L -> [D -> I]
+ * 	L -> [D -> I].
  * 
- * we need to obtain the mapping from AST iterators to tiled index array
- * subscripts of the form
+ * Compose these forms to obtain the mapping from AST iterators to tiled index
+ * array subscripts of the form
  *
- * 	L -> TI
+ * 	L -> TI.
  *
- * First, we extract the mapping from AST iterators to untiled index array
- * subcsripts from "ind_access". It has the form
- *
- * 	L -> I
- *
- * Then, we obtain the mapping between the global and tiled idnex array
- * subscripts from the tiling function and compose it with the previous
- * mapping. Note that we need to convert it to a map because
- * map_factor_range behaves differently from multi_aff_factor_range: only the
- * former allows us to properly obtain
- *
- * 	I -> TI
- *
- * from
- *
- * 	[D -> I] -> [D -> TI]
- *
- * without losing the relation imposed by equality of D's.
+ * The access map is expected to be single-valued because array accesses with
+ * subscripts can only access a single element.
  */
 static __isl_give isl_ast_expr *create_inner_expr(
 	__isl_keep isl_ast_build *build, __isl_take isl_multi_aff *tiling,
 	__isl_take isl_map *ind_access)
 {
-	isl_pw_multi_aff *ind_pma;
-	isl_pw_multi_aff *ind_pma2;
-	isl_space *ind_space;
 	isl_map *tiling_map;
-	isl_space *tiling_space;
-	isl_multi_aff *tiling2sched;
+	isl_bool single_valued;
+	isl_ctx *ctx;
 
-	ind_space = isl_space_range(isl_map_get_space(ind_access));
-	ind_space = isl_space_unwrap(ind_space);
-	ind_pma = isl_pw_multi_aff_from_map(ind_access);
-	ind_space = isl_space_range(
-		isl_pw_multi_aff_get_space(ind_pma));
-	ind_space = isl_space_unwrap(ind_space);
-	ind_pma2 = isl_pw_multi_aff_range_map(ind_space);
-	ind_pma2 = isl_pw_multi_aff_pullback_pw_multi_aff(ind_pma2,
-		ind_pma);
-
-	tiling_space = isl_multi_aff_get_space(tiling);
-	tiling_space = isl_space_domain(tiling_space);
-	tiling_space = isl_space_unwrap(tiling_space);
-	tiling2sched = isl_multi_aff_domain_map(tiling_space);
-	tiling = isl_multi_aff_range_product(tiling2sched, tiling);
-
+	ctx = isl_map_get_ctx(ind_access);
 	tiling_map = isl_map_from_multi_aff(tiling);
-	tiling_map = isl_map_factor_range(tiling_map);
-	ind_pma2 = isl_pw_multi_aff_pullback_pw_multi_aff(
-		isl_pw_multi_aff_from_map(tiling_map), ind_pma2);
+	ind_access = isl_map_apply_range(ind_access, tiling_map);
+	single_valued = isl_map_is_single_valued(ind_access);
+	if (single_valued < 0) {
+		isl_map_free(ind_access);
+		return NULL;
+	} else if (!single_valued) {
+		isl_map_free(ind_access);
+		isl_die(ctx, isl_error_internal,
+			"indirect subscript access relation is not "
+			"single-valued", return NULL);
+	}
 
-	return isl_ast_build_access_from_pw_multi_aff(build, ind_pma2);
+	return isl_ast_build_access_from_pw_multi_aff(build,
+		isl_pw_multi_aff_from_map(ind_access));
 }
 
 /* Given an AST expression "expr" that corresponds to an indirect access to a
