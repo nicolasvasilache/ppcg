@@ -73,6 +73,9 @@ struct ppcg_options {
 	/* Allow hybrid tiling whenever a suitable input pattern is found. */
 	int hybrid;
 
+	/* Apply cross band tiling whenever suitable input pattern is found. */
+	int cross_band_tile;
+
 	/* Unroll the code for copying to/from shared memory. */
 	int unroll_copy_shared;
 	/* Unroll code inside tile on GPU targets. */
