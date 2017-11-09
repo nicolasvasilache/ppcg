@@ -5970,8 +5970,9 @@ static struct gpu_stmt *extract_stmts(isl_ctx *ctx, struct ppcg_scop *scop,
  * we call "gen->print" to print the AST in the desired output format
  * to "p".
  *
- * If it turns out that it does not make sense to generate GPU code,
- * then we generate CPU code instead.
+ * If it turns out that it does not make sense to generate GPU code and
+ * host code should be printed, then we generate CPU code instead.
+ * If only kernel code should be printed, then generate GPU code anyway.
  *
  * The declarations of the arrays that are visible outside of the scop
  * are printed outside of the code generated from the schedule,
@@ -6032,6 +6033,7 @@ static __isl_give isl_printer *generate(__isl_take isl_printer *p,
 	isl_ctx *ctx;
 	isl_schedule *schedule;
 	isl_bool any_permutable;
+	int print_host_code;
 
 	if (!scop)
 		return isl_printer_free(p);
@@ -6044,8 +6046,9 @@ static __isl_give isl_printer *generate(__isl_take isl_printer *p,
 	gen->prog = prog;
 	schedule = get_schedule(gen);
 
+	print_host_code = gen->options->print_host_code;
 	any_permutable = has_any_permutable_node(schedule);
-	if (any_permutable < 0 || !any_permutable) {
+	if (any_permutable < 0 || (print_host_code && !any_permutable)) {
 		if (any_permutable < 0)
 			p = isl_printer_free(p);
 		else
