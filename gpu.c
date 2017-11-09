@@ -2882,17 +2882,22 @@ static isl_bool has_any_permutable_node(__isl_keep isl_schedule *schedule)
  * because a band node will be inserted in front of the returned
  * node and this is not possible for filter nodes that are children
  * of set or sequence nodes.
+ * A band node should also not be inserted in front of a domain or context node.
  */
 static int is_candidate(__isl_keep isl_schedule_node *node)
 {
 	isl_bool permutable;
+	enum isl_schedule_node_type type;
 
 	if (isl_schedule_node_get_type(node) == isl_schedule_node_leaf)
 		return 1;
 	permutable = is_permutable(node);
 	if (permutable < 0 || permutable)
 		return permutable;
-	if (isl_schedule_node_get_type(node) == isl_schedule_node_filter)
+	type = isl_schedule_node_get_type(node);
+	if (type == isl_schedule_node_domain ||
+	    type == isl_schedule_node_context ||
+	    type == isl_schedule_node_filter)
 		return 0;
 	permutable = subtree_has_permutable_bands(node);
 	if (permutable < 0)
@@ -5965,8 +5970,9 @@ static struct gpu_stmt *extract_stmts(isl_ctx *ctx, struct ppcg_scop *scop,
  * we call "gen->print" to print the AST in the desired output format
  * to "p".
  *
- * If it turns out that it does not make sense to generate GPU code,
- * then we generate CPU code instead.
+ * If it turns out that it does not make sense to generate GPU code and
+ * host code should be printed, then we generate CPU code instead.
+ * If only kernel code should be printed, then generate GPU code anyway.
  *
  * The declarations of the arrays that are visible outside of the scop
  * are printed outside of the code generated from the schedule,
@@ -6027,6 +6033,7 @@ static __isl_give isl_printer *generate(__isl_take isl_printer *p,
 	isl_ctx *ctx;
 	isl_schedule *schedule;
 	isl_bool any_permutable;
+	int print_host_code;
 
 	if (!scop)
 		return isl_printer_free(p);
@@ -6039,8 +6046,9 @@ static __isl_give isl_printer *generate(__isl_take isl_printer *p,
 	gen->prog = prog;
 	schedule = get_schedule(gen);
 
+	print_host_code = gen->options->print_host_code;
 	any_permutable = has_any_permutable_node(schedule);
-	if (any_permutable < 0 || !any_permutable) {
+	if (any_permutable < 0 || (print_host_code && !any_permutable)) {
 		if (any_permutable < 0)
 			p = isl_printer_free(p);
 		else
