@@ -2882,17 +2882,22 @@ static isl_bool has_any_permutable_node(__isl_keep isl_schedule *schedule)
  * because a band node will be inserted in front of the returned
  * node and this is not possible for filter nodes that are children
  * of set or sequence nodes.
+ * A band node should also not be inserted in front of a domain or context node.
  */
 static int is_candidate(__isl_keep isl_schedule_node *node)
 {
 	isl_bool permutable;
+	enum isl_schedule_node_type type;
 
 	if (isl_schedule_node_get_type(node) == isl_schedule_node_leaf)
 		return 1;
 	permutable = is_permutable(node);
 	if (permutable < 0 || permutable)
 		return permutable;
-	if (isl_schedule_node_get_type(node) == isl_schedule_node_filter)
+	type = isl_schedule_node_get_type(node);
+	if (type == isl_schedule_node_domain ||
+	    type == isl_schedule_node_context ||
+	    type == isl_schedule_node_filter)
 		return 0;
 	permutable = subtree_has_permutable_bands(node);
 	if (permutable < 0)
