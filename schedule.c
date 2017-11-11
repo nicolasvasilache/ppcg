@@ -186,12 +186,36 @@ __isl_give isl_schedule *ppcg_get_schedule(isl_ctx *ctx,
 	return schedule;
 }
 
+__isl_give isl_schedule_node *ppcg_set_schedule_node_unroll(
+	__isl_take isl_schedule_node *node)
+{
+	isl_id *id;
+	struct pragma_unroll_annotation *pragma;
+	int n, i;
+	isl_ctx *ctx;
+
+	ctx = isl_schedule_node_get_ctx(node);
+	n = isl_schedule_node_band_n_member(node);
+	pragma = alloc_pragma_unroll_annotation(ctx, n);
+	for (i = 0; i < n; ++i)
+		pragma->dims[i] = 1;
+	id = isl_id_alloc(ctx, "pragma-unroll", pragma);
+	id = isl_id_set_free_user(id, free_pragma_unroll_annotation);
+	node = isl_schedule_node_insert_mark(node, id);
+	node = isl_schedule_node_child(node, 0);
+
+	return node;
+}
+
 /* Mark all dimensions in the band node "node" to be of "type".
  */
 __isl_give isl_schedule_node *ppcg_set_schedule_node_type(
 	__isl_take isl_schedule_node *node, enum isl_ast_loop_type type)
 {
-	int i, n;
+	int n, i;
+
+	if (type == isl_ast_loop_unroll)
+		return ppcg_set_schedule_node_unroll(node);
 
 	n = isl_schedule_node_band_n_member(node);
 	for (i = 0; i < n; ++i)
@@ -1005,4 +1029,20 @@ __isl_give isl_schedule_node *ppcg_schedule_node_cross_tile(
 	node = isl_schedule_node_parent(node);
 
 	return node;
+}
+
+struct pragma_unroll_annotation *alloc_pragma_unroll_annotation(
+	isl_ctx *ctx, int n)
+{
+	struct pragma_unroll_annotation *p = isl_alloc_type(ctx,
+		struct pragma_unroll_annotation);
+	p->n = n;
+	p->dims = isl_calloc_array(ctx, int, n);
+	return p;
+}
+
+void free_pragma_unroll_annotation(void *v) {
+	struct pragma_unroll_annotation *p = v;
+	free(p->dims);
+	free(p);
 }

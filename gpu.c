@@ -2331,6 +2331,40 @@ static __isl_give isl_ast_node *build_array_bounds(
 	return node;
 }
 
+struct depth_stack {
+	int depth;
+	struct pragma_unroll_annotation *unroll;
+	struct depth_stack *next;
+};
+
+static struct depth_stack *depth_stack_alloc(isl_ctx *ctx)
+{
+	struct depth_stack *c = isl_alloc_type(ctx, struct depth_stack);
+	return c;
+}
+
+static struct depth_stack *depth_stack_push(isl_ctx *ctx,
+	struct depth_stack *next, int depth,
+	struct pragma_unroll_annotation *unroll)
+{
+	struct depth_stack *c = depth_stack_alloc(ctx);
+	c->depth = depth;
+	c->next = next;
+	c->unroll = unroll;
+}
+
+static struct depth_stack *depth_stack_pop(struct depth_stack *stack) 
+{
+	struct depth_stack *c;
+
+	if (stack == NULL)
+		return stack;
+
+	c = stack->next;
+	free(stack);
+	return c;
+}
+
 /* Internal data structure for at_domain.
  *
  * "prog" represents the entire scop.
@@ -2341,6 +2375,7 @@ static __isl_give isl_ast_node *build_array_bounds(
 struct ppcg_at_domain_data {
 	struct gpu_prog *prog;
 	struct ppcg_kernel *kernel;
+	struct depth_stack *depths;
 };
 
 /* This function is called for each instance of a user statement
@@ -2681,6 +2716,8 @@ static isl_stat before_mark(__isl_keep isl_id *mark,
 	__isl_keep isl_ast_build *build, void *user)
 {
 	struct ppcg_at_domain_data *data = user;
+	isl_space *space;
+	int depth;
 
 	if (!mark)
 		return isl_stat_error;
@@ -2688,6 +2725,14 @@ static isl_stat before_mark(__isl_keep isl_id *mark,
 		data->kernel = isl_id_get_user(mark);
 		if (build_grid_and_local_array_sizes(data->kernel, build) < 0)
 			return isl_stat_error;
+	}
+	if (!strcmp(isl_id_get_name(mark), "pragma-unroll")) {
+		struct pragma_unroll_annotation *unroll = isl_id_get_user(mark);
+		space = isl_ast_build_get_schedule_space(build);
+		depth = isl_space_dim(space, isl_dim_out);
+		isl_space_free(space);
+		data->depths = depth_stack_push(isl_ast_build_get_ctx(build),
+			data->depths, depth, unroll);
 	}
 	return isl_stat_ok;
 }
@@ -2717,6 +2762,12 @@ static __isl_give isl_ast_node *after_mark(__isl_take isl_ast_node *node,
 	id = isl_ast_node_mark_get_id(node);
 	if (!id)
 		return isl_ast_node_free(node);
+	if (!strcmp(isl_id_get_name(id), "pragma-unroll")) {
+		data->depths = depth_stack_pop(data->depths);
+		isl_id_free(id);
+		return isl_ast_node_mark_get_node(node);
+	}
+
 	if (strcmp(isl_id_get_name(id), "kernel") || !data->kernel) {
 		isl_id_free(id);
 		return node;
@@ -2734,6 +2785,29 @@ static __isl_give isl_ast_node *after_mark(__isl_take isl_ast_node *node,
 	node = isl_ast_node_set_annotation(node, id);
 
 	return node;
+}
+
+static __isl_give isl_id *before_for(__isl_keep isl_ast_build *build,
+	void *user)
+{
+	struct ppcg_at_domain_data *data = user;
+	int depth, loop_index;
+	isl_space *space;
+
+	if (!data->depths)
+		return isl_id_alloc(isl_ast_build_get_ctx(build), "plain-for",
+			NULL);
+
+	space = isl_ast_build_get_schedule_space(build);
+	depth = isl_space_dim(space, isl_dim_out);
+	loop_index = depth - data->depths->depth;
+	isl_space_free(space);
+
+	if (data->depths->unroll->dims[loop_index]) {
+		return isl_id_alloc(isl_ast_build_get_ctx(build),
+			"pragma-unroll-for", NULL);
+	}
+	return isl_id_alloc(isl_ast_build_get_ctx(build), "plain-for", NULL);
 }
 
 static isl_bool update_depth(__isl_keep isl_schedule_node *node, void *user)
@@ -2769,6 +2843,7 @@ static __isl_give isl_ast_node *generate_code(struct gpu_gen *gen,
 
 	data.prog = gen->prog;
 	data.kernel = NULL;
+	data.depths = NULL;
 
 	depth = 0;
 	if (isl_schedule_foreach_schedule_node_top_down(schedule, &update_depth,
@@ -2780,6 +2855,7 @@ static __isl_give isl_ast_node *generate_code(struct gpu_gen *gen,
 	build = isl_ast_build_set_at_each_domain(build, &at_domain, &data);
 	build = isl_ast_build_set_before_each_mark(build, &before_mark, &data);
 	build = isl_ast_build_set_after_each_mark(build, &after_mark, &data);
+	build = isl_ast_build_set_before_each_for(build, &before_for, &data);
 	if (gen->prog->scop->options->debug->dump_final_schedule)
 		isl_schedule_dump(schedule);
 	tree = isl_ast_build_node_from_schedule(build, schedule);
@@ -3664,6 +3740,7 @@ __isl_give isl_schedule_node *add_copies_group_private(
 	graft = isl_schedule_node_child(graft, 0);
 	graft = isl_schedule_node_insert_partial_schedule(graft, mupa);
 	graft = unroll(graft);
+	graft = isl_schedule_node_parent(graft);
 
 	graft = isl_schedule_node_insert_filter(graft, filter);
 
@@ -3826,6 +3903,9 @@ static __isl_give isl_schedule_node *add_copies_group_shared(
 		graft = isl_schedule_node_band_split(graft,
 						tile->n - kernel->n_block);
 		graft = isl_schedule_node_child(graft, 0);
+		if (kernel->options->unroll_copy_shared)
+			graft = ppcg_set_schedule_node_type(graft,
+				isl_ast_loop_unroll);
 	}
 	if (tile->n < kernel->n_block)
 		skip = kernel->n_block - tile->n;
@@ -4428,6 +4508,9 @@ static __isl_give isl_schedule_node *mark_outer_permutable(
 	// node = isl_schedule_node_insert_mark(node, id);
 	// node = isl_schedule_node_parent(node);
         node = mark_thread(node, user);
+
+	if (gen->options->unroll_gpu_tile)
+		node = isl_schedule_node_parent(node);
 
 	scale = gen->options->scale_tile_loops;
 
@@ -6227,3 +6310,4 @@ void *gpu_prog_free(struct gpu_prog *prog)
 	free(prog);
 	return NULL;
 }
+
