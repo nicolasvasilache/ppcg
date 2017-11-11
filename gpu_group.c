@@ -653,7 +653,7 @@ static int compute_tile_depth(struct gpu_group_data *data,
  * Note that there is no need to test whether [O -> A] -> T itself
  * is single-valued as that was already tested in access_is_bijective.
  */
-static int compute_accessed_by_single_thread_depth(struct gpu_group_data *data,
+int compute_accessed_by_single_thread_depth(struct gpu_group_data *data,
 	__isl_keep isl_map *acc)
 {
 	int i;

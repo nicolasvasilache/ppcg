@@ -360,6 +360,9 @@ int join_all_groups(int n, struct gpu_array_ref_group **groups);
 int smaller_tile(struct gpu_array_tile *tile,
   struct gpu_array_tile *tile1, struct gpu_array_tile *tile2);
 
+int compute_accessed_by_single_thread_depth(struct gpu_group_data *data,
+	__isl_keep isl_map *acc);
+
 /* Return a read ("read" is 1) or write access relation for "group"
  * with those accesses removed that are only needed to communicate data
  * within the subtree of the schedule rooted at "node".
