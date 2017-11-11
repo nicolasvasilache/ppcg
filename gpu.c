@@ -785,7 +785,10 @@ static __isl_give isl_union_map *group_tagged_access_relation(
 	int i;
 	isl_union_map *access;
 
-	access = isl_union_map_empty(isl_map_get_space(group->access));
+	if (group->n_ref == 0)
+		return NULL;
+
+	access = isl_union_map_empty(isl_map_get_space(group->refs[0]->access));
 	for (i = 0; i < group->n_ref; ++i) {
 		isl_map *map_i;
 
@@ -2924,7 +2927,10 @@ static __isl_give isl_union_set *group_tagged_writes(
 	isl_space *space;
 	isl_union_set *writes;
 
-	space = isl_map_get_space(group->access);
+	if (group->n_ref == 0)
+		return NULL;
+
+	space = isl_map_get_space(group->refs[0]->access);
 	writes = isl_union_set_empty(space);
 	for (i = 0; i < group->n_ref; ++i) {
 		isl_space *space;

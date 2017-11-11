@@ -52,7 +52,10 @@ __isl_give isl_union_map *gpu_array_ref_group_access_relation(
 	int i;
 	isl_union_map *access;
 
-	access = isl_union_map_empty(isl_map_get_space(group->access));
+	if (group->n_ref == 0)
+		return NULL;
+
+	access = isl_union_map_empty(isl_map_get_space(group->refs[0]->access));
 	for (i = 0; i < group->n_ref; ++i) {
 		isl_map *map_i;
 
@@ -802,7 +805,6 @@ static int populate_array_references(struct gpu_local_array_info *local,
 			return -1;
 		group->local_array = local;
 		group->array = local->array;
-		group->access = map;
 		group->write = access->write;
 		group->exact_write = access->exact_write;
 		group->slice = access->n_index < local->array->n_index;
@@ -828,7 +830,6 @@ struct gpu_array_ref_group *gpu_array_ref_group_free(
 		return NULL;
 	gpu_array_tile_free(group->shared_tile);
 	gpu_array_tile_free(group->private_tile);
-	isl_map_free(group->access);
 	if (group->n_ref > 1)
 		free(group->refs);
 	free(group);
@@ -842,8 +843,11 @@ int accesses_overlap(struct gpu_array_ref_group *group1,
 	struct gpu_array_ref_group *group2)
 {
 	int disjoint;
+	isl_union_map *access1, *access2;
 
-	disjoint = isl_map_is_disjoint(group1->access, group2->access);
+	access1 = gpu_array_ref_group_access_relation(group1, 1, 1);
+	access2 = gpu_array_ref_group_access_relation(group2, 1, 1);
+	disjoint = isl_union_map_is_disjoint(access1, access2);
 	if (disjoint < 0)
 		return -1;
 
@@ -864,14 +868,12 @@ struct gpu_array_ref_group *join_groups(
 	if (!group1 || !group2)
 		return NULL;
 
-	ctx = isl_map_get_ctx(group1->access);
+	ctx = isl_space_get_ctx(group1->array->space);
 	group = isl_calloc_type(ctx, struct gpu_array_ref_group);
 	if (!group)
 		return NULL;
 	group->local_array = group1->local_array;
 	group->array = group1->array;
-	group->access = isl_map_union(isl_map_copy(group1->access),
-					isl_map_copy(group2->access));
 	group->write = group1->write || group2->write;
 	group->exact_write = group1->exact_write && group2->exact_write;
 	group->slice = group1->slice || group2->slice;
@@ -956,16 +958,12 @@ static int check_requires_unroll(struct gpu_group_data *data,
 }
 
 /* Map the domain of "access" to the outer data->shared_depth
- * schedule dimensions.  When data->shared_depth is equal to
- * data->thread_depth, this result is already available in group->access.
+ * schedule dimensions.
  */
 __isl_give isl_map *shared_access(struct gpu_array_ref_group *group,
 	__isl_keep isl_union_map *access, struct gpu_group_data *data)
 {
 	isl_union_map *shared;
-
-	if (data->shared_depth == data->thread_depth)
-		return isl_map_copy(group->access);
 
 	shared = isl_union_map_copy(access);
 	shared = isl_union_map_apply_domain(shared,
@@ -1239,6 +1237,21 @@ static int group_overlapping_writes(struct ppcg_kernel *kernel,
 	return group_writes(kernel, n, groups, &accesses_overlap, 0, data);
 }
 
+struct eliminate_one_data {
+	isl_union_map *result;
+	int depth;
+};
+
+static isl_stat eliminate_one(__isl_take isl_map *map, void *usr) {
+	int dim;
+	struct eliminate_one_data *data = usr;
+
+	dim = isl_map_dim(map, isl_dim_in);
+	map = isl_map_eliminate(map, isl_dim_in, data->depth, dim - data->depth);
+	data->result = isl_union_map_add_map(data->result, map);
+	return isl_stat_ok;
+}
+
 /* Check if the access relations of group1 and group2 overlap within
  * the outermost min(group1->min_depth, group2->min_depth) loops.
  */
@@ -1248,20 +1261,29 @@ int depth_accesses_overlap(struct gpu_array_ref_group *group1,
 	int depth;
 	int dim;
 	int empty;
-	isl_map *map_i, *map_j, *map;
+	isl_union_map *map_i, *map_j, *map;
 
 	depth = group1->min_depth;
 	if (group2->min_depth < depth)
 		depth = group2->min_depth;
-	map_i = isl_map_copy(group1->access);
-	dim = isl_map_dim(map_i, isl_dim_in);
-	map_i = isl_map_eliminate(map_i, isl_dim_in, depth, dim - depth);
-	map_j = isl_map_copy(group2->access);
-	map_j = isl_map_eliminate(map_j, isl_dim_in, depth, dim - depth);
-	map = isl_map_intersect(map_i, map_j);
-	empty = isl_map_is_empty(map);
-	isl_map_free(map);
+	map_i = gpu_array_ref_group_access_relation(group1, 1, 1);
+	map_j = gpu_array_ref_group_access_relation(group2, 1, 1);
 
+	struct eliminate_one_data data;
+	data.depth = depth;
+	data.result = isl_union_map_empty(isl_union_map_get_space(map_i));
+	if (isl_union_map_foreach_map(map_i, eliminate_one, &data) < 0)
+		return -1;
+	map_i = data.result;
+	data.result = isl_union_map_empty(isl_union_map_get_space(map_j));
+	if (isl_union_map_foreach_map(map_j, eliminate_one, &data) < 0)
+		return -1;
+	map_j = data.result;
+	map = isl_union_map_intersect(map_i, map_j);
+	empty = isl_union_map_is_empty(map);
+	
+	if (empty < 0)
+		return empty;
 	return !empty;
 }
 
@@ -1788,8 +1810,7 @@ void gpu_array_ref_group_compute_tiling(struct gpu_array_ref_group *group)
 	if (!tile)
 		return;
 
-	space = isl_map_get_space(group->access);
-	space = isl_space_from_range(isl_space_range(space));
+	space = isl_space_from_range(isl_space_copy(group->array->space));
 	space = isl_space_add_dims(space, isl_dim_in, tile->depth);
 	insert_array = isl_multi_aff_domain_map(isl_space_copy(space));
 
