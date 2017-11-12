@@ -552,9 +552,7 @@ __isl_give isl_schedule_node *ppcg_schedule_node_band_set_properties(
 }
 
 /* Are all children of the sequence node "node" band nodes
- * living in "space"?
- * "space" has been obtained from the first child, so the first child
- * does not need to be checked.
+ * living in "space" or leaves?
  */
 static isl_bool band_children_with_space(__isl_keep isl_schedule_node *node,
 	__isl_keep isl_space *space)
@@ -566,15 +564,17 @@ static isl_bool band_children_with_space(__isl_keep isl_schedule_node *node,
 	n = isl_schedule_node_n_children(node);
 
 	ok = isl_bool_true;
-	for (i = 1; ok == isl_bool_true && i < n; ++i) {
+	for (i = 0; ok == isl_bool_true && i < n; ++i) {
 		isl_schedule_node *child;
 
 		child = isl_schedule_node_get_child(node, i);
 		child = isl_schedule_node_child(child, 0);
 		type = isl_schedule_node_get_type(child);
-		if (type < 0)
+		if (type < 0) {
 			ok = isl_bool_error;
-		else if (type != isl_schedule_node_band) {
+		} else if (type == isl_schedule_node_leaf) {
+			ok = isl_bool_true;
+		} else if (type != isl_schedule_node_band) {
 			ok = isl_bool_false;
 		} else {
 			isl_space *space2;
@@ -596,7 +596,8 @@ static isl_bool band_children_with_space(__isl_keep isl_schedule_node *node,
  *  |   |   |
  *  B  ...  B
  *
- * with B band nodes and S a sequence node, and
+ * with B band nodes or leaves and S a sequence node, and
+ * at least one B is not a leaf, and
  * with all B nodes living in the same space?
  */
 static isl_bool sequence_with_equal_spaced_band_children(
@@ -604,6 +605,7 @@ static isl_bool sequence_with_equal_spaced_band_children(
 {
 	enum isl_schedule_node_type type;
 	isl_bool ok;
+	int i, n;
 
 	type = isl_schedule_node_get_type(node);
 	if (type < 0)
@@ -612,22 +614,32 @@ static isl_bool sequence_with_equal_spaced_band_children(
 		return isl_bool_false;
 
 	node = isl_schedule_node_copy(node);
-	node = isl_schedule_node_child(node, 0);
-	node = isl_schedule_node_child(node, 0);
-
-	type = isl_schedule_node_get_type(node);
-	if (type < 0)
-		ok = isl_bool_error;
-	else
-		ok = type == isl_schedule_node_band;
-
-	if (ok == isl_bool_true) {
-		isl_space *space;
-
-		space = isl_schedule_node_band_get_space(node);
-		node = isl_schedule_node_ancestor(node, 2);
-		ok = band_children_with_space(node, space);
-		isl_space_free(space);
+	ok = isl_bool_false;
+	n = isl_schedule_node_n_children(node);
+	for (i = 0; i < n; ++i) {
+		node = isl_schedule_node_child(node, i);
+		node = isl_schedule_node_child(node, 0);
+	
+		type = isl_schedule_node_get_type(node);
+		if (type < 0) {
+			ok = isl_bool_error;
+		} else if (type == isl_schedule_node_leaf) {
+			node = isl_schedule_node_ancestor(node, 2);
+			continue;
+		} else {
+			ok = type == isl_schedule_node_band;
+		}
+	
+		if (ok == isl_bool_true) {
+			isl_space *space;
+	
+			space = isl_schedule_node_band_get_space(node);
+			node = isl_schedule_node_ancestor(node, 2);
+			ok = band_children_with_space(node, space);
+			isl_space_free(space);
+		} else {
+			break;
+		}
 	}
 
 	isl_schedule_node_free(node);
@@ -645,8 +657,8 @@ static isl_bool sequence_with_equal_spaced_band_children(
  *  |   |   |
  *  B  ...  B
  *
- * with A and B band nodes and S a sequence node, and
- * with all B nodes living in the same space?
+ * with A a band node, B band nodes or leaves and S a sequence node, and
+ * with all B band nodes living in the same space?
  */
 isl_bool ppcg_schedule_node_has_cross_tile_shape(
 	__isl_keep isl_schedule_node *node)
@@ -676,19 +688,27 @@ isl_bool ppcg_schedule_node_has_cross_tile_shape(
  *  |   |   |
  *  B  ...  B
  *
- * with A and B band nodes and S a sequence node, and
- * with all B nodes living in the same space,
+ * with A a band node, B band nodes or leaves and S a sequence node, and
+ * with all B band nodes living in the same space,
  * return the product of the spaces of A and B.
  */
 __isl_give isl_space *ppcg_schedule_node_get_cross_tile_space(
 	__isl_keep isl_schedule_node *node)
 {
 	isl_space *space, *space2;
+	int i, n;
 
 	space = isl_schedule_node_band_get_space(node);
 	node = isl_schedule_node_get_child(node, 0);
-	node = isl_schedule_node_child(node, 0);
-	node = isl_schedule_node_child(node, 0);
+	n = isl_schedule_node_n_children(node);
+	for (i = 0; i < n; ++i) {
+		node = isl_schedule_node_child(node, i);
+		node = isl_schedule_node_child(node, 0);
+		if (isl_schedule_node_get_type(node) == isl_schedule_node_leaf)
+			node = isl_schedule_node_ancestor(node, 2);
+		else
+			break;
+	}
 	space2 = isl_schedule_node_band_get_space(node);
 	isl_schedule_node_free(node);
 
@@ -813,6 +833,8 @@ static isl_bool is_valid_at( __isl_keep isl_schedule_node *node,
 
 	node = isl_schedule_node_copy(node);
 	node = isl_schedule_node_child(node, 0);
+	if (isl_schedule_node_get_type(node) == isl_schedule_node_leaf)
+		return isl_bool_true;
 	partial = isl_schedule_node_band_get_partial_schedule(node);
 	isl_schedule_node_free(node);
 	partial = isl_multi_union_pw_aff_pullback_union_pw_multi_aff(partial,
@@ -991,14 +1013,20 @@ __isl_give isl_schedule_node *ppcg_schedule_node_cross_tile(
 		node = isl_schedule_node_child(node, i);
 		node = isl_schedule_node_child(node, 0);
 		node = isl_schedule_node_child(node, 0);
-		node = isl_schedule_node_band_tile(node,
+		if (isl_schedule_node_get_type(node) == isl_schedule_node_band) {
+			node = isl_schedule_node_band_tile(node,
 						    isl_multi_val_copy(sizes));
-		node = isl_schedule_node_parent(node);
-		node = isl_schedule_node_band_lower(node);
-		node = isl_schedule_node_child(node, 0);
-		node = isl_schedule_node_band_join_child(node);
-		node = ppcg_schedule_node_band_set_properties(node, sc);
-		node = isl_schedule_node_ancestor(node, 3);
+			node = isl_schedule_node_parent(node);
+			node = isl_schedule_node_band_lower(node);
+			node = isl_schedule_node_child(node, 0);
+			node = isl_schedule_node_band_join_child(node);
+			node = ppcg_schedule_node_band_set_properties(node, sc);
+			node = isl_schedule_node_ancestor(node, 3);
+		} else {
+			node = isl_schedule_node_parent(node);
+			node = ppcg_schedule_node_band_set_properties(node, sc);
+			node = isl_schedule_node_ancestor(node, 2);
+		}
 	}
 	isl_multi_val_free(sizes);
 
