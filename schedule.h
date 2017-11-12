@@ -40,12 +40,4 @@ __isl_give isl_schedule_node *ppcg_schedule_node_cross_tile(
 	__isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes,
 	__isl_keep isl_schedule_constraints *sc);
 
-struct pragma_unroll_annotation {
-  int n;
-  int *dims;
-};
-
-struct pragma_unroll_annotation *alloc_pragma_unroll_annotation(isl_ctx *ctx, int n);
-void free_pragma_unroll_annotation(void *v);
-
 #endif
