@@ -522,23 +522,6 @@ static __isl_give isl_printer *print_kernel_stmt(__isl_take isl_printer *p,
 	return p;
 }
 
-static __isl_give isl_printer *print_for_with_pragma(__isl_take isl_printer *p,
-	__isl_take isl_ast_print_options *print_options,
-	__isl_keep isl_ast_node *node, void *usr) 
-{
-	isl_id *id;
-	(void) usr;
-
-	id = isl_ast_node_get_annotation(node);
-	if (id && !strcmp(isl_id_get_name(id), "pragma-unroll-for")) {
-		p = isl_printer_start_line(p);
-		p = isl_printer_print_str(p, "#pragma unroll");
-		p = isl_printer_end_line(p);
-	}
-	isl_id_free(id);
-	return isl_ast_node_for_print(node, p, print_options);
-}
-
 static void print_kernel(struct gpu_prog *prog, struct ppcg_kernel *kernel,
 	struct cuda_info *cuda)
 {
@@ -562,8 +545,6 @@ static void print_kernel(struct gpu_prog *prog, struct ppcg_kernel *kernel,
 	print_options = isl_ast_print_options_alloc(ctx);
 	print_options = isl_ast_print_options_set_print_user(print_options,
 						    &print_kernel_stmt, NULL);
-	print_options = isl_ast_print_options_set_print_for(
-			print_options, &print_for_with_pragma, NULL);
 	p = isl_ast_node_print(kernel->tree, p, print_options);
 	isl_printer_free(p);
 
