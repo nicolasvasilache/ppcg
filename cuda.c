@@ -412,7 +412,7 @@ static __isl_give isl_printer *print_type_strip_const(__isl_take isl_printer *p,
 		size_t length = full_length - sizeof(kw_const) + 1;
 		size_t prefix_length = pos - var->array->type;
 		type = isl_alloc_array(isl_printer_get_ctx(p),
-			char, length);
+			char, length + 1);
 		strncpy(type, var->array->type, prefix_length);
 		strncpy(type + prefix_length, pos + sizeof(kw_const) - 1,
 			full_length - prefix_length - sizeof(kw_const) + 1);
@@ -452,11 +452,12 @@ static __isl_give isl_printer *print_kernel_var(__isl_take isl_printer *p,
 		 * vector types.
 		 */
 		if (var->array->n_index > 1 && j == var->array->n_index - 1) {
-			if (isl_val_is_zero(isl_val_mod(isl_val_copy(v),
-				isl_val_int_from_ui(
-					isl_val_get_ctx(v), 2)))) {
+			isl_val *two;
+
+			two = isl_val_int_from_ui(isl_val_get_ctx(v), 2);
+			if (isl_val_is_divisible_by(v, two))
 				v = isl_val_add_ui(v, 1);
-			}
+			isl_val_free(two);
 		}
 		p = isl_printer_print_val(p, v);
 		isl_val_free(v);
