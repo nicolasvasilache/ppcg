@@ -412,7 +412,7 @@ static __isl_give isl_printer *print_type_strip_const(__isl_take isl_printer *p,
 		size_t length = full_length - sizeof(kw_const) + 1;
 		size_t prefix_length = pos - var->array->type;
 		type = isl_alloc_array(isl_printer_get_ctx(p),
-			char, length);
+			char, length + 1);
 		strncpy(type, var->array->type, prefix_length);
 		strncpy(type + prefix_length, pos + sizeof(kw_const) - 1,
 			full_length - prefix_length - sizeof(kw_const) + 1);
