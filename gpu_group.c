@@ -846,6 +846,8 @@ int accesses_overlap(struct gpu_array_ref_group *group1,
 	isl_union_map *access1, *access2;
 
 	access1 = gpu_array_ref_group_access_relation(group1, 1, 1);
+	isl_die(isl_union_map_get_ctx(access1), isl_error_internal,
+		"no longer implemented", return 1);
 	access2 = gpu_array_ref_group_access_relation(group2, 1, 1);
 	disjoint = isl_union_map_is_disjoint(access1, access2);
 	if (disjoint < 0)
@@ -1268,6 +1270,8 @@ int depth_accesses_overlap(struct gpu_array_ref_group *group1,
 		depth = group2->min_depth;
 	map_i = gpu_array_ref_group_access_relation(group1, 1, 1);
 	map_j = gpu_array_ref_group_access_relation(group2, 1, 1);
+	isl_die(isl_union_map_get_ctx(map_i), isl_error_internal,
+		"no longer implemented", return 1);
 
 	struct eliminate_one_data data;
 	data.depth = depth;
