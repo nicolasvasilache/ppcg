@@ -19,17 +19,13 @@ struct gpu_array_ref_group {
 	/* Position of this group in the list of reference groups of array. */
 	int nr;
 
-	/* The following fields are use during the construction of the groups.
-	 * access is the combined access relation relative to the private
-	 * memory tiling.  In particular, the domain of the map corresponds
-	 * to the first thread_depth dimensions of the kernel schedule.
+	/* The following fields are used during the construction of the groups.
 	 * write is set if any access in the group is a write.
 	 * exact_write is set if all writes are definite writes.
 	 * slice is set if there is at least one access in the group
 	 * that refers to more than one element
 	 * "min_depth" is the minimum of the tile depths and thread_depth.
 	 */
-	isl_map *access;
 	int write;
 	int exact_write;
 	int slice;
