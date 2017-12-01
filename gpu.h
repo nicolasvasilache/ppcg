@@ -37,6 +37,21 @@ struct gpu_stmt_access {
 	/* The reference id of the corresponding pet_expr. */
 	isl_id *ref_id;
 
+	/* For trivially indirect accesses, access of the index expression,
+         * NULL otherwise.
+	 * An access is trivially indirect if it has only one indirected
+	 * subscript of the shape
+	 *
+         * A[...][affine_expr(Index[j])][...]
+	 *
+	 * where affine_expr can involve other dimensions but not other
+	 * indirections. */
+	struct gpu_stmt_access *indirection;
+	/* Index of the indirect index expression. */
+	int indirect_index;
+	/* Indirect index expression. */
+	isl_pw_aff *indirect_index_expr;
+
 	struct gpu_stmt_access *next;
 };
 
@@ -175,6 +190,8 @@ struct gpu_prog {
 	/* All tagged definite kills in the entire program */
 	isl_union_map *tagged_must_kill;
 
+	isl_schedule_constraints *sc;
+
 	/* The set of inner array elements that may be preserved. */
 	isl_union_set *may_persist;
 
@@ -207,6 +224,25 @@ struct gpu_gen {
 		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
 		struct gpu_types *types, void *user);
 	void *print_user;
+
+        /* Callback for generating nodes with ppcg_kernel attached. */
+        __isl_give isl_schedule_node *(*generate_kernel)(
+		struct gpu_gen *, __isl_take isl_schedule_node *node,
+		int, isl_multi_val *, void *user);
+        void *generate_kernel_user;
+
+	/* Callback for adding custom schedule constraints. */
+	__isl_give isl_basic_set *(*add_schedule_constraints)(
+		__isl_take isl_basic_set *, int, int,
+		__isl_keep isl_id_list *, int *, int *, void *);
+	void *add_schedule_constraints_user;
+
+	/* Callback for merge/fusion heuristic. */
+	isl_bool (*merge_callback)(__isl_take isl_union_map *original_schedule,
+		__isl_take isl_union_map *updated_schedule,
+		int n_coincident_after, int n_coincident_before,
+		int is_along_edge, void *user);
+	void *merge_callback_user;
 
 	struct gpu_prog *prog;
 	/* The generated AST. */
@@ -358,7 +394,6 @@ struct ppcg_kernel_var {
  * for computing private/shared memory tiles.
  * The domain corresponds to the original statement instances, i.e.,
  * those that appear in the leaves of the schedule tree.
- * copy_schedule_dim is the dimension of this schedule.
  *
  * sync_writes contains write references that require synchronization.
  * Each reference is represented by a universe set in a space [S[i,j] -> R[]]
@@ -404,7 +439,6 @@ struct ppcg_kernel {
 	isl_union_set *block_filter;
 	isl_union_set *thread_filter;
 	isl_union_pw_multi_aff *copy_schedule;
-	int copy_schedule_dim;
 
 	isl_union_set *sync_writes;
 
@@ -422,6 +456,22 @@ void *gpu_prog_free(struct gpu_prog *prog);
 
 int ppcg_kernel_requires_array_argument(struct ppcg_kernel *kernel, int i);
 
+int generate_gpu_custom(isl_ctx *ctx, const char *input, FILE *out,
+	struct ppcg_options *options,
+	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
+		struct gpu_prog *prog, __isl_keep isl_ast_node *tree,
+		struct gpu_types *types, void *user), void *user,
+	__isl_give isl_basic_set *(*add_custom_constraints)(
+		__isl_take isl_basic_set *, int, int,
+		__isl_keep isl_id_list *, int *, int *, void *),
+	void *userc,
+	isl_bool (*merge_callback)(__isl_take isl_union_map *original_schedule,
+		__isl_take isl_union_map *updated_schedule,
+		int n_coincident_after, int n_coincident_before,
+		int is_along_edge, void *user), void *merge_callback_user,
+        __isl_give isl_schedule_node *(*generate_kernel)(
+		struct gpu_gen *, __isl_take isl_schedule_node *node,
+		int, isl_multi_val *, void *user), void *user2);
 int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 	struct ppcg_options *options,
 	__isl_give isl_printer *(*print)(__isl_take isl_printer *p,
@@ -431,5 +481,9 @@ int generate_gpu(isl_ctx *ctx, const char *input, FILE *out,
 __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	__isl_take isl_schedule_node *node, int scale,
 	__isl_keep isl_multi_val *sizes);
+
+struct ppcg_callbacks {
+  isl_schedule_node* (*mark_thread_callback)(isl_schedule_node*, void*);
+};
 
 #endif

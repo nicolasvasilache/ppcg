@@ -652,7 +652,7 @@ static __isl_give isl_schedule_constraints *construct_cpu_schedule_constraints(
  * in "ps" and then compute a schedule from those schedule constraints,
  * possibly grouping statement instances based on the input schedule.
  */
-static __isl_give isl_schedule *compute_cpu_schedule(struct ppcg_scop *ps)
+__isl_give isl_schedule *compute_cpu_schedule(struct ppcg_scop *ps)
 {
 	isl_schedule_constraints *sc;
 	isl_schedule *schedule;

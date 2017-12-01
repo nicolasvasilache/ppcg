@@ -28,7 +28,6 @@
 #include <isl/ast.h>
 #include <isl/id_to_ast_expr.h>
 #include <isl/ast_build.h>
-#include <isl/schedule.h>
 #include <pet.h>
 #include "ppcg.h"
 #include "ppcg_options.h"
@@ -868,6 +867,69 @@ static void *ppcg_scop_free(struct ppcg_scop *ps)
 	return NULL;
 }
 
+static struct ppcg_scop *ppcg_scop_from_torchterra(isl_ctx *ctx, isl_union_set *domain,
+   isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule, isl_set *context)
+{
+   struct ppcg_scop *ps;
+
+   printf("Should not be here, EXIT");
+   exit(1);
+
+
+   // isl_space *space;
+   //      struct options *options;
+
+   //      options = options_new_with_defaults();
+   //      assert(options);
+
+   //      isl_options_set_ast_build_detect_min_max(ctx, 1);
+   //      isl_options_set_schedule_whole_component(ctx, 1);
+   //      isl_options_set_schedule_maximize_band_depth(ctx, 1);
+   //      isl_options_set_schedule_maximize_coincidence(ctx, 0);
+   // isl_options_set_schedule_maximize_band_depth(ctx, 1);
+   // isl_options_set_schedule_separate_components(ctx, 0);
+   // isl_options_set_schedule_parametric(ctx, 0);
+
+   // options->ppcg->target = PPCG_TARGET_C;
+   // options->ppcg->live_range_reordering =  0;
+   // options->ppcg->group_chains = 1;
+   // struct isl_options* isl_opt = options->ppcg->isl;
+   //      ppcg_options_set_target_defaults(options->ppcg);
+   // ps = isl_calloc_type(ctx, struct ppcg_scop);
+   // if(!ps)
+   //    return NULL;
+
+   // ps->options = options->ppcg;
+   // ps->context = isl_set_copy(context);
+   // ps->domain = isl_union_set_copy(domain);
+   // ps->reads = isl_union_map_copy(reads);
+   // space = isl_union_map_get_space(reads);
+   // ps->may_writes = isl_union_map_copy(writes);
+   // ps->must_writes = isl_union_map_copy(writes);
+   // ps->must_kills = isl_union_map_empty(space);
+   // ps->independence = isl_union_map_empty(space);
+   // ps->schedule = isl_schedule_copy(schedule);
+   // ps->call = isl_union_set_empty(isl_union_set_get_space(domain));
+
+   return ps;
+}
+
+isl_schedule *torchterra_transform(isl_ctx *ctx, isl_union_set *domain,
+isl_union_map *reads, isl_union_map *writes, isl_schedule *schedule, isl_set *context)
+{
+   struct ppcg_scop *ps;
+   isl_schedule *newSchedule;
+
+   ps = ppcg_scop_from_torchterra(ctx, domain, reads, writes, schedule, context);
+
+	compute_dependences(ps);
+
+   newSchedule = compute_cpu_schedule(ps);
+
+   return newSchedule;
+}
+
+
 /* Extract a ppcg_scop from a pet_scop.
  *
  * The constructed ppcg_scop refers to elements from the pet_scop
@@ -893,14 +955,25 @@ static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
 	ps->options = options;
 	ps->start = pet_loc_get_start(scop->loc);
 	ps->end = pet_loc_get_end(scop->loc);
-	ps->context = isl_set_copy(scop->context);
-	ps->context = set_intersect_str(ps->context, options->ctx);
+        if (options->override_context) {
+		if (options->ctx) {
+			ps->context = isl_set_read_from_str(ctx, options->ctx);
+		} else {
+			isl_space *space;
+			space = isl_set_get_space(scop->context);
+			ps->context = isl_set_empty(space);
+		}
+	} else {
+		ps->context = isl_set_copy(scop->context);
+		ps->context = set_intersect_str(ps->context, options->ctx);
+	}
 	if (options->non_negative_parameters) {
 		isl_space *space = isl_set_get_space(ps->context);
 		isl_set *nn = isl_set_nat_universe(space);
 		ps->context = isl_set_intersect(ps->context, nn);
 	}
 	ps->domain = collect_non_kill_domains(scop);
+
 	ps->call = collect_call_domains(scop);
 	ps->tagged_reads = pet_scop_get_tagged_may_reads(scop);
 	ps->reads = pet_scop_get_may_reads(scop);
@@ -911,6 +984,7 @@ static struct ppcg_scop *ppcg_scop_from_pet_scop(struct pet_scop *scop,
 	ps->tagged_must_kills = pet_scop_get_tagged_must_kills(scop);
 	ps->must_kills = pet_scop_get_must_kills(scop);
 	ps->schedule = isl_schedule_copy(scop->schedule);
+
 	ps->pet = scop;
 	ps->independence = isl_union_map_empty(isl_set_get_space(ps->context));
 	for (i = 0; i < scop->n_independence; ++i)
@@ -1030,16 +1104,31 @@ static int check_options(isl_ctx *ctx)
 	return 0;
 }
 
-int main(int argc, char **argv)
-{
-	int r;
-	isl_ctx *ctx;
+isl_ctx* isl_ctx_alloc_with_pet_and_ppcg_options() {
 	struct options *options;
 
 	options = options_new_with_defaults();
 	assert(options);
 
-	ctx = isl_ctx_alloc_with_options(&options_args, options);
+	return isl_ctx_alloc_with_options(&options_args, options);
+}
+
+struct pet_options* isl_ctx_get_pet_options(isl_ctx* ctx) {
+  struct options *options = isl_ctx_peek_options(ctx, &options_args);
+  return options->pet;
+}
+
+struct ppcg_options* isl_ctx_get_ppcg_options(isl_ctx* ctx) {
+  struct options *options = isl_ctx_peek_options(ctx, &options_args);
+  return options->ppcg;
+}
+
+int ppcg_main(int argc, char **argv)
+{
+	int r;
+	isl_ctx *ctx = isl_ctx_alloc_with_pet_and_ppcg_options();
+	struct options *options = isl_ctx_peek_options(ctx, &options_args);
+
 	ppcg_options_set_target_defaults(options->ppcg);
 	isl_options_set_ast_build_detect_min_max(ctx, 1);
 	isl_options_set_ast_print_macro_once(ctx, 1);

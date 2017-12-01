@@ -5,6 +5,8 @@
 #include <isl/map_type.h>
 #include <isl/val.h>
 
+struct gpu_array_tile;
+
 /* The fields stride and shift only contain valid information
  * if shift != NULL.
  * If so, they express that current index is such that if you add shift,
@@ -13,6 +15,9 @@
  * The spaces of "lb" and "shift" are of the form
  *
  *	D -> [b]
+ * 
+ * "indirection" points to the tile of the index array in case of indirect
+ * access.
  */
 struct gpu_array_bound {
 	isl_val *size;
@@ -20,6 +25,8 @@ struct gpu_array_bound {
 
 	isl_val *stride;
 	isl_aff *shift;
+
+	struct gpu_array_tile *indirection;
 };
 
 /* A tile of an outer array.
