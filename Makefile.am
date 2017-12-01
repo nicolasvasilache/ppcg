@@ -24,6 +24,9 @@ LIB_PET = $(PET_LA) @PET_LIBS@
 AM_CPPFLAGS = @ISL_CFLAGS@ @PET_CFLAGS@
 LDADD = $(LIB_PET) $(LIB_ISL)
 
+ppcg_CFLAGS = $(AM_CFLAGS) @ISL_CFLAGS@ @PET_CFLAGS@
+
+lib_LTLIBRARIES = libppcg.la
 bin_PROGRAMS = ppcg
 ppcg_SOURCES = \
 	cpu.c \
@@ -56,11 +59,71 @@ ppcg_SOURCES = \
 	ppcg_options.h \
 	ppcg.c \
 	ppcg.h \
+	ppcg_main.c \
 	print.c \
 	print.h \
 	util.c \
 	util.h \
 	version.c
+
+libppcg_la_SOURCES = \
+	cpu.c \
+	cpu.h \
+	cuda.c \
+	cuda.h \
+	opencl.c \
+	opencl.h \
+	cuda_common.h \
+	cuda_common.c \
+	gpu.c \
+	gpu.h \
+	gpu_array_tile.c \
+	gpu_array_tile.h \
+	gpu_group.c \
+	gpu_group.h \
+	gpu_hybrid.c \
+	gpu_hybrid.h \
+	gpu_print.c \
+	gpu_print.h \
+	gpu_tree.c \
+	gpu_tree.h \
+	grouping.c \
+	hybrid.c \
+	hybrid.h \
+	schedule.c \
+	schedule.h \
+	ppcg_options.c \
+	ppcg_options.h \
+	ppcg.c \
+	ppcg.h \
+	print.c \
+	print.h \
+	util.c \
+	util.h \
+	version.c
+
+pkginclude_HEADERS = \
+	cpu.h \
+	cuda_common.h \
+	cuda.h \
+	extern_cpp.h \
+	gpu_array_tile.h \
+	gpu_group.h \
+	gpu.h \
+	gpu_hybrid.h \
+	gpu_print.h \
+	gpu_tree.h \
+	hybrid.h \
+	ocl_utilities.h \
+	opencl.h \
+	ppcg.h \
+	ppcg_options.h \
+	print.h \
+	schedule.h \
+	terra_ppcg.h \
+	util.h
+
+libppcg_la_LIADD = $(LIB_PET) $(LIB_ISL)
 
 TESTS = @extra_tests@
 EXTRA_TESTS = opencl_test.sh polybench_test.sh

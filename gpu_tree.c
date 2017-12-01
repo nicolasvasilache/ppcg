@@ -36,7 +36,7 @@
 
 /* Is "node" a mark node with an identifier called "name"?
  */
-static int is_marked(__isl_keep isl_schedule_node *node, const char *name)
+int is_marked(__isl_keep isl_schedule_node *node, const char *name)
 {
 	isl_id *mark;
 	int has_name;
@@ -488,7 +488,7 @@ static int has_sync_after_core(__isl_keep isl_schedule_node *node,
  * a synchronization node for "kernel" before "node".
  * Return a pointer to the original node in the updated schedule tree.
  */
-static __isl_give isl_schedule_node *insert_sync_before(
+__isl_give isl_schedule_node *insert_sync_before(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel)
 {
 	isl_union_set *domain;
@@ -508,7 +508,7 @@ static __isl_give isl_schedule_node *insert_sync_before(
  * a synchronization node for "kernel" afater "node".
  * Return a pointer to the original node in the updated schedule tree.
  */
-static __isl_give isl_schedule_node *insert_sync_after(
+__isl_give isl_schedule_node *insert_sync_after(
 	__isl_take isl_schedule_node *node, struct ppcg_kernel *kernel)
 {
 	isl_union_set *domain;

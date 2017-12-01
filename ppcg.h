@@ -10,6 +10,10 @@
 
 #include "ppcg_options.h"
 
+isl_ctx* isl_ctx_alloc_with_pet_and_ppcg_options();
+struct pet_options* isl_ctx_get_pet_options(isl_ctx* ctx);
+struct ppcg_options* isl_ctx_get_ppcg_options(isl_ctx* ctx);
+
 const char *ppcg_base_name(const char *filename);
 int ppcg_extract_base_name(char *name, const char *input);
 
@@ -116,5 +120,7 @@ int ppcg_transform(isl_ctx *ctx, const char *input, FILE *out,
 	struct ppcg_options *options,
 	__isl_give isl_printer *(*fn)(__isl_take isl_printer *p,
 		struct ppcg_scop *scop, void *user), void *user);
+
+__isl_give isl_schedule *compute_cpu_schedule(struct ppcg_scop *ps);
 
 #endif

@@ -24,4 +24,20 @@ __isl_give isl_schedule *ppcg_get_schedule(isl_ctx *ctx,
 __isl_give isl_schedule_node *ppcg_set_schedule_node_type(
 	__isl_take isl_schedule_node *node, enum isl_ast_loop_type type);
 
+__isl_give isl_schedule_node *ppcg_schedule_node_band_set_properties(
+	__isl_take isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc);
+
+isl_bool ppcg_schedule_node_has_cross_tile_shape(
+	__isl_keep isl_schedule_node *node);
+isl_bool ppcg_schedule_node_plain_can_cross_tile(
+	__isl_keep isl_schedule_node *node);
+isl_bool ppcg_schedule_node_can_cross_tile(__isl_keep isl_schedule_node *node,
+	__isl_keep isl_schedule_constraints *sc);
+__isl_give isl_space *ppcg_schedule_node_get_cross_tile_space(
+	__isl_keep isl_schedule_node *node);
+__isl_give isl_schedule_node *ppcg_schedule_node_cross_tile(
+	__isl_take isl_schedule_node *node, __isl_take isl_multi_val *sizes,
+	__isl_keep isl_schedule_constraints *sc);
+
 #endif
