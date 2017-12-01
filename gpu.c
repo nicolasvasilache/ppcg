@@ -1639,14 +1639,71 @@ error:
 	return NULL;
 }
 
-/* Check if the array reference group "group" includes indirect subscripts.
+/* Find an array reference group that contains an reference identified by
+ * "ref_id" in a given GPU kernel "kernel".
+ * 
+ * Return NULL if not found.
+ */
+static struct gpu_array_ref_group *find_group_by_id(struct ppcg_kernel *kernel,
+	__isl_keep isl_id *ref_id)
+{
+	int i, j, k;
+	struct gpu_local_array_info *array;
+	struct gpu_array_ref_group *group;
+
+	for (i = 0; i < kernel->n_array; ++i) {
+		array = &kernel->array[i];
+		for (j = 0; j < array->n_group; ++j) {
+			group = array->groups[j];
+			for (k = 0; k < group->n_ref; ++k) {
+				if (group->refs[j]->ref_id == ref_id) {
+					return group;
+				}
+			}
+		}
+	}
+	return NULL;
+}
+
+/* Check if the array reference group "group" includes indirect subscripts
+ * that require subscript remapping, that is the index array was mapped into
+ * shared/private memory and the subscript should be unwrapped.
  *
  * Since such accesses should not have been grouped, we check that there is
  * only one access in the group, and that it has an indirection.
  */
-static inline int group_has_indirection(struct gpu_array_ref_group *group) {
-	return group->n_ref == 1 && group->refs[0]->indirection;
+int needs_indirect_subscript_replacement(struct ppcg_kernel *kernel, 
+	struct gpu_array_ref_group *group)
+{
+	isl_ctx *ctx;
+	struct gpu_stmt_access *subscript;
+	struct gpu_array_ref_group *index_group;
+
+	if (group->n_ref != 1 || !group->refs[0]->indirection)
+		return 0;
+
+	ctx = isl_map_get_ctx(group->access);
+	
+	subscript = group->refs[0]->indirection;
+	index_group = find_group_by_id(kernel, subscript->ref_id);
+	if (!index_group)
+		isl_die(ctx, isl_error_internal,
+			"cannot find the group of indirect subscript",
+			return 0);
+	switch (gpu_array_ref_group_type(index_group)) {
+	case ppcg_access_shared:
+		return 1;
+	case ppcg_access_private:
+		isl_die(ctx, isl_error_internal,
+			"no support for index arrays in private memory",
+			return 0);
+	case ppcg_access_global:
+		return 0;
+	}
+
+	isl_die(ctx, isl_error_internal, "unreachable", return 0);
 }
+
 
 /* Transform the tiling of the array reference "group" group contained in its
  * tile "tile" so that it is defined over the AST loop iterators.
@@ -1675,6 +1732,7 @@ static inline int group_has_indirection(struct gpu_array_ref_group *group) {
  * for direct and indirect accesses, respectively.
  */
 static __isl_give isl_multi_pw_aff *localize_tiling(
+	struct ppcg_kernel* kernel,
 	struct gpu_array_ref_group *group,
 	struct gpu_array_tile *tile,
 	__isl_keep isl_pw_multi_aff *sched2copy)
@@ -1685,13 +1743,14 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 	isl_pw_multi_aff *pma;
 	isl_pw_multi_aff *sched2depth;
 	isl_space *indirection_space;
-	int has_indirection;
+	int tiling_with_indirection;
 
-	has_indirection = group_has_indirection(group);
+	tiling_with_indirection = needs_indirect_subscript_replacement(kernel,
+		group);
 
 	space = isl_space_domain(isl_multi_aff_get_space(tile->tiling));
 
-	if (has_indirection) {
+	if (tiling_with_indirection) {
 		indirection_space = isl_space_copy(space);
 		indirection_space = isl_space_unwrap(indirection_space);
 		indirection_space = isl_space_domain(indirection_space);
@@ -1708,7 +1767,7 @@ static __isl_give isl_multi_pw_aff *localize_tiling(
 	sched2depth = isl_pw_multi_aff_drop_dims(sched2depth, isl_dim_out,
 					    tile->depth, dim - tile->depth);
 
-	if (has_indirection) {
+	if (tiling_with_indirection) {
 		isl_space *s;
 		isl_pw_multi_aff *ipma;
 
@@ -1837,11 +1896,11 @@ static __isl_give isl_multi_pw_aff *transform_index(
 	if (!tile)
 		return index;
 
-	tiling = localize_tiling(group, tile, data->sched2copy);
+	tiling = localize_tiling(data->kernel, group, tile, data->sched2copy);
 	if (!tiling)
 		return isl_multi_pw_aff_free(index);
 
-	if (group_has_indirection(group)) {
+	if (needs_indirect_subscript_replacement(data->kernel, group)) {
 		struct gpu_stmt_access *index_access =
 			group->refs[0]->indirection;
 
@@ -2092,32 +2151,6 @@ static __isl_give isl_ast_node *create_domain_leaf(
 	return isl_ast_node_set_annotation(node, id);
 }
 
-/* Find an array reference group that contains an reference identified by
- * "ref_id" in a given GPU kernel "kernel".
- * 
- * Return NULL if not found.
- */
-static struct gpu_array_ref_group *find_group_by_id(struct ppcg_kernel *kernel,
-	__isl_keep isl_id *ref_id)
-{
-	int i, j, k;
-	struct gpu_local_array_info *array;
-	struct gpu_array_ref_group *group;
-
-	for (i = 0; i < kernel->n_array; ++i) {
-		array = &kernel->array[i];
-		for (j = 0; j < array->n_group; ++j) {
-			group = array->groups[j];
-			for (k = 0; k < group->n_ref; ++k) {
-				if (group->refs[j]->ref_id == ref_id) {
-					return group;
-				}
-			}
-		}
-	}
-	return NULL;
-}
-
 /* Create an AST expression that corresponds to the indirect access subscript
  * in the "build" context given the "tiling" of the index array of the form
  *
@@ -2276,7 +2309,7 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 						    isl_pw_multi_aff_copy(pma));
 	expr = isl_ast_build_access_from_pw_multi_aff(build, pma2);
 
-	if (group_has_indirection(group))
+	if (needs_indirect_subscript_replacement(kernel, group))
 		expr = replace_indirect_subscript(expr, build, kernel, group);
 
 	if (group->array->linearize)
