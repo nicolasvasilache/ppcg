@@ -134,7 +134,7 @@ __isl_give isl_schedule_node *atomic_ancestors(__isl_take isl_schedule_node *nod
 __isl_give isl_union_set *compute_sync_writes(
   struct ppcg_kernel *kernel, __isl_keep isl_schedule_node *node);
 
-int create_kernel_vars(struct ppcg_kernel *kernel);
+isl_stat create_kernel_vars(struct ppcg_kernel *kernel);
 
 /* Extract the set of parameter values and outer schedule dimensions
  * for which any statement instance
@@ -250,7 +250,8 @@ void ppcg_kernel_free_wrap(void *user);
  * Store the extracted sizes in "kernel".
  * Add the effectively used sizes to gen->used_sizes.
  */
-void read_grid_and_block_sizes(struct ppcg_kernel *kernel, struct gpu_gen *gen);
+isl_stat read_grid_and_block_sizes(struct ppcg_kernel *kernel,
+	struct gpu_gen *gen);
 
 /* Add parameters p[i] with identifiers "ids" to "set",
  * with bounds to 0 <= p[i] < size[i].

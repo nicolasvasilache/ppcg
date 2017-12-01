@@ -11,7 +11,6 @@
  * B.P. 105 - 78153 Le Chesnay, France
  */
 
-#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>

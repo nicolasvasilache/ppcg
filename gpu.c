@@ -11,7 +11,6 @@
  * and Ecole Normale Superieure, 45 rue d’Ulm, 75230 Paris, France
  */
 
-#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -59,7 +58,7 @@ static const char *get_outer_array_name(__isl_keep isl_map *access)
 /* Collect all references to the given array and store pointers to them
  * in array->refs.
  */
-static void collect_references(struct gpu_prog *prog,
+static isl_stat collect_references(struct gpu_prog *prog,
 	struct gpu_array_info *array)
 {
 	int i;
@@ -78,9 +77,10 @@ static void collect_references(struct gpu_prog *prog,
 		}
 	}
 
-	array->n_ref = n;
 	array->refs = isl_alloc_array(prog->ctx, struct gpu_stmt_access *, n);
-	assert(array->refs);
+	if (!array->refs)
+		return isl_stat_error;
+	array->n_ref = n;
 
 	n = 0;
 	for (i = 0; i < prog->n_stmts; ++i) {
@@ -96,6 +96,8 @@ static void collect_references(struct gpu_prog *prog,
 			array->refs[n++] = access;
 		}
 	}
+
+	return isl_stat_ok;
 }
 
 /* Compute and return the extent of "array", taking into account the set of
@@ -183,7 +185,7 @@ static isl_bool only_fixed_element_accessed(struct gpu_array_info *array)
  * i.e., if the array is a scalar, we check whether it is read-only.
  * We also check whether the array is accessed at all.
  */
-static int extract_array_info(struct gpu_prog *prog,
+static isl_stat extract_array_info(struct gpu_prog *prog,
 	struct gpu_array_info *info, struct pet_array *pa,
 	__isl_keep isl_union_set *arrays)
 {
@@ -215,20 +217,21 @@ static int extract_array_info(struct gpu_prog *prog,
 	isl_set_free(accessed);
 	info->extent = extent;
 	if (empty < 0)
-		return -1;
+		return isl_stat_error;
 	info->accessed = !empty;
 	bounds = ppcg_size_from_extent(isl_set_copy(extent));
 	bounds = isl_multi_pw_aff_gist(bounds, isl_set_copy(prog->context));
 	if (!bounds)
-		return -1;
+		return isl_stat_error;
 	if (!isl_multi_pw_aff_is_cst(bounds))
 		info->linearize = 1;
 	info->bound = bounds;
 
-	collect_references(prog, info);
+	if (collect_references(prog, info) < 0)
+		return isl_stat_error;
 	info->only_fixed_element = only_fixed_element_accessed(info);
 
-	return 0;
+	return isl_stat_ok;
 }
 
 /* Remove independence from the order constraints "order" on array "array".
@@ -331,11 +334,17 @@ void collect_order_dependences(struct gpu_prog *prog)
  * If we are allowing live range reordering, then also set
  * the dep_order field.  Otherwise leave it NULL.
  */
-static int collect_array_info(struct gpu_prog *prog)
+static isl_stat collect_array_info(struct gpu_prog *prog)
 {
 	int i;
-	int r = 0;
+	isl_stat r = isl_stat_ok;
 	isl_union_set *arrays;
+
+	prog->n_array = 0;
+	prog->array = isl_calloc_array(prog->ctx,
+			     struct gpu_array_info, prog->scop->pet->n_array);
+	if (!prog->array)
+		return isl_stat_error;
 
 	arrays = isl_union_map_range(isl_union_map_copy(prog->read));
 	arrays = isl_union_set_union(arrays,
@@ -346,11 +355,6 @@ static int collect_array_info(struct gpu_prog *prog)
 
 	arrays = isl_union_set_coalesce(arrays);
 
-	prog->n_array = prog->scop->pet->n_array;
-	prog->array = isl_calloc_array(prog->ctx,
-				     struct gpu_array_info, prog->n_array);
-	assert(prog->array);
-	prog->n_array = 0;
 	for (i = 0; i < prog->scop->pet->n_array; ++i) {
 		isl_bool field;
 
@@ -361,10 +365,10 @@ static int collect_array_info(struct gpu_prog *prog)
 			continue;
 		if (extract_array_info(prog, &prog->array[prog->n_array++],
 					prog->scop->pet->arrays[i], arrays) < 0)
-			r = -1;
+			r = isl_stat_error;
 	}
 	if (i < prog->scop->pet->n_array)
-		r = -1;
+		r = isl_stat_error;
 
 	isl_union_set_free(arrays);
 
@@ -526,14 +530,17 @@ static __isl_give isl_set *extract_sizes(__isl_keep isl_union_map *sizes,
 
 /* Given a singleton set, extract the first (at most *len) elements
  * of the single integer tuple into *sizes and update *len if needed.
+ *
+ * If "set" is NULL, then the "sizes" array is not updated.
  */
-static void read_sizes_from_set(__isl_take isl_set *set, int *sizes, int *len)
+static isl_stat read_sizes_from_set(__isl_take isl_set *set, int *sizes,
+	int *len)
 {
 	int i;
 	int dim;
 
 	if (!set)
-		return;
+		return isl_stat_ok;
 
 	dim = isl_set_dim(set, isl_dim_set);
 	if (dim < *len)
@@ -543,13 +550,17 @@ static void read_sizes_from_set(__isl_take isl_set *set, int *sizes, int *len)
 		isl_val *v;
 
 		v = isl_set_plain_get_val_if_fixed(set, isl_dim_set, i);
-		assert(v);
-
+		if (!v)
+			goto error;
 		sizes[i] = isl_val_get_num_si(v);
 		isl_val_free(v);
 	}
 
 	isl_set_free(set);
+	return isl_stat_ok;
+error:
+	isl_set_free(set);
+	return isl_stat_error;
 }
 
 /* Add the map { kernel[id] -> type[sizes] } to gen->used_sizes,
@@ -601,16 +612,20 @@ static int *read_tile_sizes(struct gpu_gen *gen, int *tile_len)
 		tile_size[n] = gen->options->tile_size;
 
 	size = extract_sizes(gen->sizes, "tile", gen->kernel_id);
-	read_sizes_from_set(size, tile_size, tile_len);
+	if (read_sizes_from_set(size, tile_size, tile_len) < 0)
+		goto error;
 	set_used_sizes(gen, "tile", gen->kernel_id, tile_size, *tile_len);
 
 	return tile_size;
+error:
+	free(tile_size);
+	return NULL;
 }
 
 /* Extract user specified "block" sizes from the "sizes" command line option,
  * after filling in some potentially useful defaults.
  */
-static void read_block_sizes(struct ppcg_kernel *kernel,
+static isl_stat read_block_sizes(struct ppcg_kernel *kernel,
 	__isl_keep isl_union_map *sizes)
 {
 	isl_set *size;
@@ -633,13 +648,13 @@ static void read_block_sizes(struct ppcg_kernel *kernel,
 	}
 
 	size = extract_sizes(sizes, "block", kernel->id);
-	read_sizes_from_set(size, kernel->block_dim, &kernel->n_block);
+	return read_sizes_from_set(size, kernel->block_dim, &kernel->n_block);
 }
 
 /* Extract user specified "grid" sizes from the "sizes" command line option,
  * after filling in some potentially useful defaults.
  */
-static void read_grid_sizes(struct ppcg_kernel *kernel,
+static isl_stat read_grid_sizes(struct ppcg_kernel *kernel,
 	__isl_keep isl_union_map *sizes)
 {
 	isl_set *size;
@@ -657,7 +672,7 @@ static void read_grid_sizes(struct ppcg_kernel *kernel,
 	}
 
 	size = extract_sizes(sizes, "grid", kernel->id);
-	read_sizes_from_set(size, kernel->grid_dim, &kernel->n_grid);
+	return read_sizes_from_set(size, kernel->grid_dim, &kernel->n_grid);
 }
 
 /* Extract user specified grid and block sizes from the gen->sizes
@@ -665,15 +680,18 @@ static void read_grid_sizes(struct ppcg_kernel *kernel,
  * Store the extracted sizes in "kernel".
  * Add the effectively used sizes to gen->used_sizes.
  */
-void read_grid_and_block_sizes(struct ppcg_kernel *kernel,
+isl_stat read_grid_and_block_sizes(struct ppcg_kernel *kernel,
 	struct gpu_gen *gen)
 {
-	read_block_sizes(kernel, gen->sizes);
-	read_grid_sizes(kernel, gen->sizes);
+	if (read_block_sizes(kernel, gen->sizes) < 0)
+		return isl_stat_error;
+	if (read_grid_sizes(kernel, gen->sizes) < 0)
+		return isl_stat_error;
 	set_used_sizes(gen, "block", kernel->id,
 					    kernel->block_dim, kernel->n_block);
 	set_used_sizes(gen, "grid", kernel->id,
 					    kernel->grid_dim, kernel->n_grid);
+	return isl_stat_ok;
 }
 
 static void *free_stmts(struct gpu_stmt *stmts, int n)
@@ -931,7 +949,7 @@ error:
 }
 
 /* Given a mapping "iterator_map" from the AST schedule to a domain,
- * return the corresponding mapping from the AST schedule to
+ * return the corresponding mapping from the AST schedule
  * to the outer D dimensions of the schedule computed by PPCG for this kernel,
  * where D is the number of dimensions affecting the copy_schedule for the
  * statement.
@@ -1086,10 +1104,16 @@ __isl_give isl_multi_pw_aff *extract_grid_size(
 		int pos;
 		isl_id *id;
 
+		if (!grid)
+			return NULL;
+
 		id = isl_id_list_get_id(kernel->block_ids, i);
 		pos = isl_set_find_dim_by_id(grid, isl_dim_param, id);
 		isl_id_free(id);
-		assert(pos >= 0);
+		if (pos < 0)
+			isl_die(isl_set_get_ctx(grid), isl_error_internal,
+				"missing constraints on block identifier",
+				grid = isl_set_free(grid));
 		grid = isl_set_equate(grid, isl_dim_param, pos, isl_dim_set, i);
 		grid = isl_set_project_out(grid, isl_dim_param, pos, 1);
 	}
@@ -1266,7 +1290,7 @@ static void create_kernel_var(isl_ctx *ctx, struct gpu_array_ref_group *group,
 					    isl_val_copy(tile->bound[j].size));
 }
 
-int create_kernel_vars(struct ppcg_kernel *kernel)
+isl_stat create_kernel_vars(struct ppcg_kernel *kernel)
 {
 	int i, j, n;
 
@@ -1284,10 +1308,10 @@ int create_kernel_vars(struct ppcg_kernel *kernel)
 		}
 	}
 
-	kernel->n_var = n;
 	kernel->var = isl_calloc_array(kernel->ctx, struct ppcg_kernel_var, n);
 	if (!kernel->var)
-		return -1;
+		return isl_stat_error;
+	kernel->n_var = n;
 
 	n = 0;
 	for (i = 0; i < kernel->n_array; ++i) {
@@ -1305,7 +1329,7 @@ int create_kernel_vars(struct ppcg_kernel *kernel)
 		}
 	}
 
-	return 0;
+	return isl_stat_ok;
 }
 
 /* Replace "pa" by the zero function defined over the universe domain
@@ -1389,6 +1413,9 @@ struct ppcg_kernel *ppcg_kernel_create_local_arrays(
 {
 	int i;
 	isl_ctx *ctx;
+
+	if (!kernel)
+		return NULL;
 
 	ctx = isl_set_get_ctx(prog->context);
 	kernel->array = isl_calloc_array(ctx,
@@ -1789,6 +1816,8 @@ static __isl_give isl_multi_pw_aff *transform_index(
 		return index;
 
 	name = get_outer_array_name(access->access);
+	if (!name)
+		return isl_multi_pw_aff_free(index);
 	i = find_array_index(data->kernel, name);
 	if (i < 0)
 		isl_die(isl_multi_pw_aff_get_ctx(index), isl_error_internal,
@@ -2058,6 +2087,8 @@ static __isl_give isl_ast_node *create_domain_leaf(
 
 	id = isl_id_alloc(ctx, "user", stmt);
 	id = isl_id_set_free_user(id, &ppcg_kernel_stmt_free);
+	if (!id)
+		ppcg_kernel_stmt_free(stmt);
 	return isl_ast_node_set_annotation(node, id);
 }
 
@@ -2233,7 +2264,7 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 
 	access = isl_map_from_union_map(isl_ast_build_get_schedule(build));
 	type = isl_map_get_tuple_name(access, isl_dim_in);
-	stmt->u.c.read = !strcmp(type, "read");
+	stmt->u.c.read = type && !strcmp(type, "read");
 	access = isl_map_reverse(access);
 	pma = isl_pw_multi_aff_from_map(access);
 	pma = isl_pw_multi_aff_reset_tuple_id(pma, isl_dim_out);
@@ -2266,6 +2297,8 @@ static __isl_give isl_ast_node *create_access_leaf(struct ppcg_kernel *kernel,
 
 	id = isl_id_alloc(kernel->ctx, "copy", stmt);
 	id = isl_id_set_free_user(id, &ppcg_kernel_stmt_free);
+	if (!id)
+		ppcg_kernel_stmt_free(stmt);
 	return isl_ast_node_set_annotation(node, id);
 }
 
@@ -2286,6 +2319,8 @@ static __isl_give isl_ast_node *create_sync_leaf(
 	stmt->type = ppcg_kernel_sync;
 	id = isl_id_alloc(kernel->ctx, "sync", stmt);
 	id = isl_id_set_free_user(id, &ppcg_kernel_stmt_free);
+	if (!id)
+		ppcg_kernel_stmt_free(stmt);
 	return isl_ast_node_set_annotation(node, id);
 }
 
@@ -3759,11 +3794,11 @@ __isl_give isl_schedule_node *add_copies_group_private(
  * this synchronization if we are at the outer level since then there
  * won't be a next load.
  * In the case of a write, we need to make sure there is some synchronization
- * after the core computation such taht we can put the write from shared
+ * after the core computation such that we can put the write from shared
  * memory to global memory after that synchronization.
  * Unless we are at the outer level, we also need a synchronization node
  * after the write to ensure the data is saved to global memory
- * before the next iteration write to the same shared memory.
+ * before the next iteration writes to the same shared memory.
  * It also makes sure the data has arrived in global memory before
  * it is read in a subsequent iteration.
  */
@@ -4159,7 +4194,8 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	kernel->n_block = n_outer_coincidence(node_thread);
 	isl_schedule_node_free(node_thread);
 	kernel->id = gen->kernel_id++;
-	read_grid_and_block_sizes(kernel, gen);
+	if (read_grid_and_block_sizes(kernel, gen) < 0)
+		node = isl_schedule_node_free(node);
 
 	kernel->sync_writes = compute_sync_writes(kernel, node);
 
@@ -4263,6 +4299,8 @@ __isl_give isl_schedule_node *gpu_create_kernel(struct gpu_gen *gen,
 	node = isl_schedule_node_parent(node);
 
 	isl_id_free(id);
+	if (!id)
+		ppcg_kernel_free(kernel);
 	return node;
 }
 
@@ -5928,7 +5966,8 @@ static int extract_access(__isl_keep pet_expr *expr, void *user)
 	isl_multi_pw_aff *index;
 
 	access = isl_alloc_type(ctx, struct gpu_stmt_access);
-	assert(access);
+	if (!access)
+		return -1;
 	access->next = NULL;
 	access->read = pet_expr_access_is_read(expr);
 	access->write = pet_expr_access_is_write(expr);
@@ -6275,7 +6314,8 @@ struct gpu_prog *gpu_prog_alloc(isl_ctx *ctx, struct ppcg_scop *scop)
 		return NULL;
 
 	prog = isl_calloc_type(ctx, struct gpu_prog);
-	assert(prog);
+	if (!prog)
+		return NULL;
 
 	prog->ctx = ctx;
 	prog->scop = scop;

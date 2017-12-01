@@ -686,7 +686,7 @@ int compute_accessed_by_single_thread_depth(struct gpu_group_data *data,
 		acc = isl_map_project_out(acc, isl_dim_in, i, 1);
 		sv = isl_map_is_single_valued(acc);
 		if (sv < 0)
-			return -1;
+			goto error;
 		if (!sv)
 			break;
 	}
@@ -694,6 +694,9 @@ int compute_accessed_by_single_thread_depth(struct gpu_group_data *data,
 	isl_map_free(acc);
 
 	return ++i;
+error:
+	isl_map_free(acc);
+	return -1;
 }
 
 /* Adjust the fields of "tile" to reflect the new input dimension "depth".
@@ -801,10 +804,13 @@ static int populate_array_references(struct gpu_local_array_info *local,
 		map = isl_map_detect_equalities(map);
 
 		group = isl_calloc_type(ctx, struct gpu_array_ref_group);
-		if (!group)
+		if (!group) {
+			isl_map_free(map);
 			return -1;
+		}
 		group->local_array = local;
 		group->array = local->array;
+		isl_map_free(map);
 		group->write = access->write;
 		group->exact_write = access->exact_write;
 		group->slice = access->n_index < local->array->n_index;
@@ -1588,6 +1594,9 @@ static void compute_privatization(struct gpu_group_data *data,
 		isl_val *v;
 		isl_id *id;
 		int pos;
+
+		if (!set)
+			break;
 
 		aff = isl_aff_var_on_domain(isl_local_space_copy(ls),
 					isl_dim_set, data->thread_depth + i);
