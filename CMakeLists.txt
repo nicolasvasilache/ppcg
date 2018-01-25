@@ -133,7 +133,8 @@ install (TARGETS ppcg-static
 
 install (TARGETS ppcg_bin DESTINATION bin)
 
-install(DIRECTORY ${CMAKE_CURRENT_LIST_DIR} DESTINATION include FILES_MATCHING PATTERN "*.h")
+file(GLOB header_files *.h)
+install(FILES ${header_files} DESTINATION include/ppcg)
 
 ################################################################################
 # Add tests
